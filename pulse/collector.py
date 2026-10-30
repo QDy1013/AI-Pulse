@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 import math
 import sqlite3
 from dataclasses import dataclass, field, asdict
@@ -97,10 +98,14 @@ def consume(app, d, state, generic=False):
     p = d.get('payload') or {}
     ts = d.get('timestamp')
     if app == 'Codex':
+        if t == 'session_meta' and not c.get('start'):
+            c['start'] = stamp(p.get('timestamp') or ts)
         if t == 'turn_context': c['model'] = p.get('model', '')
         if t == 'event_msg' and p.get('type') in ('task_started', 'turn_started'):
             c['start'] = stamp(p.get('started_at') or ts)
             c['turn'] = p.get('turn_id', str(ts))
+        if t == 'response_item' and (p.get('type') in ('function_call_output', 'custom_tool_call_output') or p.get('role') == 'user'):
+            c['start'] = max(c.get('start', 0), stamp(ts))
         if t == 'token_usage_record':
             c['modern'] = True
             # Remove compatibility token_count rows if a modern record follows them.
@@ -134,20 +139,29 @@ def consume(app, d, state, generic=False):
         u['input_tokens'] = sum(number(u.get(k)) for k in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
         u['cached_input_tokens'] = u.get('cache_read_input_tokens', 0)
         u['reasoning_output_tokens'] = (u.get('output_tokens_details') or {}).get('thinking_tokens', 0)
+        if m.get('model') == '<synthetic>' and not u['input_tokens'] and not number(u.get('output_tokens')):
+            return
         key = m['id']
+        # Pin request start when message.id first appears so mid-stream tool_result ('user')
+        # events cannot overwrite the start time of later blocks in the same response.
+        start = c.setdefault('starts', {}).setdefault(key, c.get('start', 0))
         old = out.get(key)
         if old and old.output > number(u.get('output_tokens')): return
-        seconds = stamp(ts) - c.get('start', 0) if c.get('start') else 0
+        seconds = stamp(ts) - start if start else 0
         r = usage_request(app, key, ts, u, m.get('model', ''), seconds if seconds > 0 else None,
                           'turn_elapsed_estimate' if seconds > 0 else 'unavailable')
         out[r.key] = r
     elif app == 'WorkBuddy':
         pd = d.get('providerData') or {}
+        now = stamp(ts)
+        raw_id = pd.get('messageId') or (d.get('id') if isinstance(pd.get('usage'), dict) else None)
+        if raw_id:
+            key = str(d.get('sessionId', '')) + ':' + str(raw_id)
+            c.setdefault('starts', {}).setdefault(key, c.get('start', 0))
+        if (t == 'message' and d.get('role') == 'user') or t == 'function_call_result':
+            if now > 0: c['start'] = now
         usage = pd.get('usage')
-        if not isinstance(usage, dict): return
-        key = pd.get('messageId') or d.get('id')
-        if not key: return
-        key = str(d.get('sessionId', '')) + ':' + str(key)
+        if not isinstance(usage, dict) or not raw_id: return
         inp_details = usage.get('inputTokensDetails') or []
         out_details = usage.get('outputTokensDetails') or []
         u = {'input_tokens': usage.get('inputTokens'), 'output_tokens': usage.get('outputTokens'),
@@ -155,13 +169,20 @@ def consume(app, d, state, generic=False):
              'reasoning_output_tokens': sum(number(x.get('reasoning_tokens')) for x in out_details if isinstance(x, dict))}
         old = out.get(key)
         if old and old.output > number(u['output_tokens']): return
-        out[key] = usage_request(app, key, ts, u, pd.get('model') or pd.get('requestModelName', ''))
+        start = c.get('starts', {}).get(key, 0)
+        seconds = now - start if start and now > start else 0
+        out[key] = usage_request(app, key, ts, u, pd.get('model') or pd.get('requestModelName', ''),
+                                 seconds if seconds > 0 else None,
+                                 'turn_elapsed_estimate' if seconds > 0 else 'unavailable')
+        if now > c.get('start', 0): c['start'] = now
     elif app == 'Reasonix':
         if 'completion' not in d or 'ts' not in d: return
-        u = {'input_tokens': d.get('prompt'), 'output_tokens': d.get('completion'),
+        prompt = d['prompt'] if 'prompt' in d else (number(d.get('cache_hit')) + number(d.get('cache_miss')))
+        u = {'input_tokens': prompt, 'output_tokens': d.get('completion'),
              'reasoning_output_tokens': d.get('reasoning'), 'cached_input_tokens': d.get('cache_hit')}
+        model = re.sub(r'^[^/]*-[0-9a-f]{16,}/', '', str(d.get('model') or ''))
         key = str(d.get('id') or (str(d['ts']) + ':' + str(d.get('model', '')) + ':' + str(d.get('source', '')) + ':' + str(state.offset)))
-        out[key] = usage_request(app, key, d['ts'], u, d.get('model', ''))
+        out[key] = usage_request(app, key, d['ts'], u, model)
 
 class Collector:
     def __init__(self, config=None):

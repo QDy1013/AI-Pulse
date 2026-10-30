@@ -54,18 +54,24 @@ class ParsingTests(unittest.TestCase):
 
     def test_claude_repeated_snapshots(self):
         s = FileState()
-        for n in [10, 30, 20]:
-            consume('Claude', {'type':'assistant','timestamp':TS,'message':{'id':'msg1','usage':{'output_tokens':n,'input_tokens':2,'cache_read_input_tokens':10,'cache_creation_input_tokens':20}}}, s)
+        consume('Claude', {'type':'api-request','timestamp':'2026-10-30T02:00:00Z'}, s)
+        consume('Claude', {'type':'assistant','timestamp':'2026-10-30T02:00:02Z','message':{'id':'msg1','usage':{'output_tokens':10,'input_tokens':2,'cache_read_input_tokens':10,'cache_creation_input_tokens':20}}}, s)
+        # Mid-stream tool_result ('user') must not clobber msg1's start timestamp.
+        consume('Claude', {'type':'user','timestamp':'2026-10-30T02:00:03.900Z'}, s)
+        for n in [30, 20]:
+            consume('Claude', {'type':'assistant','timestamp':'2026-10-30T02:00:04Z','message':{'id':'msg1','usage':{'output_tokens':n,'input_tokens':2,'cache_read_input_tokens':10,'cache_creation_input_tokens':20}}}, s)
         self.assertEqual(len(s.requests), 1)
         self.assertEqual(s.requests['msg1'].output, 30)
         self.assertEqual(s.requests['msg1'].input, 32)
+        self.assertAlmostEqual(s.requests['msg1'].seconds, 4.0)
 
     def test_reasonix_no_invented_timing(self):
         s = FileState()
-        consume('Reasonix', {'ts':TS,'completion':50,'prompt':100,'reasoning':20}, s)
+        consume('Reasonix', {'ts':TS,'model':'deepseek-flash-c17feb32f2d068d3bd8c9f2c779f0793/deepseek-v4-flash','completion':50,'prompt':100,'reasoning':20}, s)
         r = next(iter(s.requests.values()))
         self.assertIsNone(r.speed)
         self.assertEqual(r.output, 50)
+        self.assertEqual(r.model, 'deepseek-v4-flash')
 
     def test_unknown_schema_ignored(self):
         s = FileState()
@@ -74,10 +80,14 @@ class ParsingTests(unittest.TestCase):
 
     def test_workbuddy_parallel_tools_share_message_usage(self):
         s = FileState()
+        consume('WorkBuddy', {'type':'message','role':'user','sessionId':'s','timestamp':'2026-10-30T01:59:58Z'}, s)
+        consume('WorkBuddy', {'type':'reasoning','id':'r0','sessionId':'s','timestamp':'2026-10-30T01:59:59Z','providerData':{'messageId':'response1'}}, s)
         for ident in ['tool1', 'tool2']:
             consume('WorkBuddy', {'type':'function_call','id':ident,'sessionId':'s','timestamp':TS,'providerData':{'messageId':'response1','usage':{'inputTokens':200,'outputTokens':40,'outputTokensDetails':[{'reasoning_tokens':10}]}}}, s)
         self.assertEqual(len(s.requests), 1)
-        self.assertEqual(next(iter(s.requests.values())).output, 40)
+        req = next(iter(s.requests.values()))
+        self.assertEqual(req.output, 40)
+        self.assertAlmostEqual(req.seconds, 2.0)
 
     def test_generic_duration_and_nonfinite(self):
         s = FileState()

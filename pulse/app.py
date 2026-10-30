@@ -731,7 +731,7 @@ class Pulse(QMainWindow):
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setMinimumHeight(185)
-        for col, width in enumerate([140, 108, 210, 96, 92, 84]):
+        for col, width in enumerate([140, 136, 195, 96, 92, 84]):
             t.setColumnWidth(col, width)
         t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         t.horizontalHeader().setMinimumSectionSize(70)
