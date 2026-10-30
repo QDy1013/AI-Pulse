@@ -123,4 +123,28 @@ class FileTests(unittest.TestCase):
             rows = Collector(cfg).scan()['Claude']['requests']
             self.assertEqual(sum(r.output for r in rows), 40)
 
+    def test_parse_errors_persist_across_scans(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)/'usage.jsonl'
+            p.write_text('not json\n' + json.dumps({'schema':'ai-pulse/v1','id':'a','timestamp':TS,'usage':{'output_tokens':5}}) + '\n')
+            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['imports']['Codex'] = [str(p)]
+            c = Collector(cfg)
+            self.assertEqual(c.scan()['Codex']['errors'], 1)
+            self.assertEqual(c.scan()['Codex']['errors'], 1)
+
+    def test_locked_file_keeps_last_rows(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)/'usage.jsonl'
+            p.write_text(json.dumps({'schema':'ai-pulse/v1','id':'a','timestamp':TS,'usage':{'output_tokens':5}}) + '\n')
+            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['imports']['Codex'] = [str(p)]
+            c = Collector(cfg)
+            self.assertEqual(len(c.scan()['Codex']['requests']), 1)
+            with p.open('a') as f: f.write(json.dumps({'schema':'ai-pulse/v1','id':'b','timestamp':TS,'usage':{'output_tokens':7}}) + '\n')
+            with patch.object(Path, 'open', side_effect=PermissionError('locked')):
+                result = c.scan()['Codex']
+            self.assertEqual(len(result['requests']), 1)
+            self.assertEqual(result['errors'], 1)
+            self.assertEqual(len(c.scan()['Codex']['requests']), 2)
+
 if __name__ == '__main__': unittest.main()

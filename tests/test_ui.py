@@ -3,7 +3,6 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import time
 import unittest
-from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
@@ -42,5 +41,17 @@ class DesktopTests(unittest.TestCase):
         pix=self.window.grab()
         self.assertEqual(pix.width(),round(self.window.width()*pix.devicePixelRatio()))
         self.assertGreater(self.window.cards[0].value.fontMetrics().height(),20)
+
+    def test_unchanged_scan_keeps_selection_and_old_data_falls_back_to_all(self):
+        self.window.table.selectRow(1)
+        self.window.received(self.window.data)
+        self.assertEqual(self.window.table.currentRow(),1)
+        fresh=Pulse();fresh.timer.stop()
+        old={a:{'requests':[],'errors':0,'status':'x'} for a in APPS}
+        old['Codex']['requests']=[Request('o','Codex',time.time()-3*86400,'m',output=10)]
+        fresh.received(old)
+        self.assertEqual(fresh.period,'全部记录')
+        self.assertEqual(len(fresh.rows),1)
+        fresh.close()
 
 if __name__=='__main__':unittest.main()

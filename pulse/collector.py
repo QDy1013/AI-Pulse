@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import math
-import time
 import sqlite3
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -186,9 +185,9 @@ class Collector:
             for path, generic in paths.items():
                 key = (app, str(path), generic)
                 live_keys.add(key)
+                state = self.files.setdefault(key, FileState())
                 try:
                     st = path.stat()
-                    state = self.files.setdefault(key, FileState())
                     if generic == 'sqlite':
                         wal = Path(str(path) + '-wal')
                         walstat = wal.stat() if wal.exists() else None
@@ -219,12 +218,17 @@ class Collector:
                                     d = json.loads(line)
                                     if isinstance(d, dict): consume(app, d, state, generic)
                                 except (ValueError, TypeError, AttributeError, KeyError):
-                                    errors += 1
+                                    # Each line is read only once; keep the count so it persists across scans.
+                                    state.context['_errors'] = state.context.get('_errors', 0) + 1
                     state.context['_mtime'] = st.st_mtime_ns
                     latest = max(latest, st.st_mtime)
+                    errors += state.context.get('_errors', 0)
                     rows.extend(state.requests.values())
                 except (OSError, sqlite3.Error):
+                    # Busy/locked file (Windows share locks, active SQLite writer): keep the
+                    # last known rows so totals do not flicker down for one refresh.
                     errors += 1
+                    rows.extend(self.files[key].requests.values())
             # Same response can appear in copied Claude session logs: count it once.
             unique = {}
             for r in rows:
@@ -232,7 +236,6 @@ class Collector:
             rows = sorted(unique.values(), key=lambda r: r.timestamp)
             if rows: status = '已接入 · 本地用量记录'
             elif existing and app == 'Antigravity': status = '检测到会话 · 尚无可读取的用量记录'
-            elif existing and app == 'WorkBuddy': status = '检测到目录 · 请导入标准用量记录'
             elif existing: status = '已找到目录 · 等待用量记录'
             else: status = '未找到数据 · 可设置路径或导入'
             result[app] = {'status': status, 'requests': rows, 'files': len(paths),
