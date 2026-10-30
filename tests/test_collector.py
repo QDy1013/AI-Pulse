@@ -17,10 +17,11 @@ def wire(k, v):
     return vint(k * 8 + 2) + vint(len(v)) + v if isinstance(v, bytes) else vint(k * 8) + vint(v)
 
 def gravity_metadata(output=90):
-    start = wire(1, 1793325600)
+    created = wire(1, 1793325600)
     end = wire(1, 1793325603)
     usage = wire(2, 1000) + wire(3, output) + wire(9, 30) + wire(5, 500) + wire(11, b'response-gravity')
-    return wire(1, start) + wire(7, end) + wire(9, usage)
+    # Real PLANNER_RESPONSE rows set field 32 (started_at) equal to field 7 (finished_generating_at).
+    return wire(1, created) + wire(7, end) + wire(32, end) + wire(9, usage)
 
 class ParsingTests(unittest.TestCase):
     def test_antigravity_protocol_fields_and_truncation(self):

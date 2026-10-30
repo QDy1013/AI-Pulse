@@ -35,7 +35,7 @@ Token 数来自本地记录，未按文字长度猜测。思考 Token 通常是�
 
 **速度不是模型纯解码速度**。Codex 根据任务起点（后续请求按上一响应时间）到 usage 事件时间估算；Claude 根据最近 user / api-request 事件到 assistant 记录时间估算。可能包含排队、网络、工具执行和等待，界面以 `≈` 标识。平均速度为有耗时请求的输出 Token 总和除以其耗时总和，不把无耗时请求纳入。跨软件重叠请求按各自耗时求和，并非墙钟吞吐量。导入的 duration_ms 按来源提供的数值计算。
 
-Antigravity 的字段编号根据应用自带协议定义核对，只读取 metadata 计量信息；速度采用步骤 started_at（缺失时 created_at）到 finished_generating_at（缺失时 completed_at）。数据库以只读模式访问并读取 WAL 更新。格式不匹配时显示待记录或读取异常，不按字节值猜测用量。
+Antigravity 的字段编号根据应用自带协议定义核对，只读取 metadata 计量信息；速度采用步骤有效起点（started_at 早于结束时间时取 started_at，否则取步骤创建起点 created_at）到 finished_generating_at（缺失时 completed_at）。数据库以只读模式访问并读取 WAL 更新。格式不匹配时显示待记录或读取异常，不按字节值猜测用量。
 
 **Antigravity 模型名**：`steps.metadata` 中仅记录占位枚举编号（如 `1401`），程序会自动读取同会话 `brain/<会话ID>/.system_generated/logs/transcript.jsonl` 中的模型切换事件（`Model Selection`）还原真实模型名，并在缺失日志时复用已识别的编号映射。若伴随日志被清理，也可在“数据源 → 反重力 → 模型名称”中按 `编号 = 名称` 手动补充或覆盖。
 

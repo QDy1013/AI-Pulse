@@ -77,8 +77,12 @@ def decode_metadata(raw):
     usage = fields(raw_usage)
     # ModelUsageStats fields 2/3/9/5: input/output/thinking/cache read.
     # Preserve the recorded input total; cache fields are not added again.
-    start = protobuf_time(first(meta, 32, b'')) or protobuf_time(first(meta, 1, b''))
     end = protobuf_time(first(meta, 7, b'')) or protobuf_time(first(meta, 8, b''))
+    started = protobuf_time(first(meta, 32, b''))
+    created = protobuf_time(first(meta, 1, b''))
+    # On LLM response steps, Antigravity stamps started_at == finished_generating_at;
+    # fall back to created_at whenever started_at is missing or not strictly before end.
+    start = started if 0 < started < end else (created or started)
     return {
         'timestamp': end or start,
         'seconds': end - start if end > start > 0 else None,
