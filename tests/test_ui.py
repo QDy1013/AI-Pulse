@@ -6,7 +6,7 @@ import unittest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from pulse.app import Pulse
+from pulse.app import Pulse, format_model_names, parse_model_names
 from pulse.collector import APPS, Request
 
 class DesktopTests(unittest.TestCase):
@@ -53,5 +53,10 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(fresh.period,'全部记录')
         self.assertEqual(len(fresh.rows),1)
         fresh.close()
+
+    def test_model_name_table_round_trip(self):
+        names=parse_model_names('1418 = B\n bad line \n1401 = Claude Opus 5.5\n= x\n')
+        self.assertEqual(names,{'1418':'B','1401':'Claude Opus 5.5'})
+        self.assertEqual(format_model_names(names),'1401 = Claude Opus 5.5\n1418 = B')
 
 if __name__=='__main__':unittest.main()

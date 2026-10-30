@@ -4,7 +4,36 @@ Field mappings confirmed against the application's embedded CortexStepMetadata
 and ModelUsageStats protocol descriptors. Unknown fields are skipped. No
 application code, proprietary descriptors, or conversation payloads are bundled.
 """
+import json
+import re
 import sqlite3
+
+MODEL_CHANGE = re.compile(
+    r'<USER_SETTINGS_CHANGE>\s*The user changed setting `Model Selection` from [^\n]+? to ([^\n]+?)\. No need to comment'
+)
+
+def transcript_path(db_path):
+    return db_path.parent.parent / 'brain' / db_path.stem / '.system_generated/logs/transcript.jsonl'
+
+def transcript_models(db_path):
+    """Extract (step_index, model_name) transitions from the companion transcript log."""
+    path = transcript_path(db_path)
+    changes = []
+    if not path.is_file(): return changes
+    try:
+        with path.open(encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if 'Model Selection' not in line: continue
+                try: d = json.loads(line)
+                except ValueError: continue
+                if d.get('type') != 'USER_INPUT' or not isinstance(d.get('step_index'), int): continue
+                for m in MODEL_CHANGE.finditer(d.get('content') or ''):
+                    name = m.group(1).strip()
+                    if name and name != 'None':
+                        changes.append((d['step_index'], name))
+    except OSError:
+        return changes
+    return sorted(changes)
 
 def fields(data):
     values = {}
@@ -61,6 +90,7 @@ def decode_metadata(raw):
 
 def read_database(path):
     rows = []
+    changes = transcript_models(path)
     # mode=ro honors SQLite WAL. immutable=1 would miss active WAL updates.
     uri = 'file:' + path.as_posix() + '?mode=ro'
     con = sqlite3.connect(uri, uri=True, timeout=0.2)
@@ -71,6 +101,10 @@ def read_database(path):
                 if d:
                     ident = d['id'].decode('utf-8', errors='replace') if isinstance(d['id'], bytes) else ''
                     d['id'] = ident or (path.stem + ':' + str(idx))
+                    name = ''
+                    for step_idx, candidate in changes:
+                        if step_idx <= idx: name = candidate
+                    d['model_name'] = name
                     rows.append(d)
             except (ValueError, TypeError, IndexError):
                 continue

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 import sqlite3
 from pathlib import Path
-from pulse.collector import Collector, FileState, consume, defaults, number, stamp
+from pulse.collector import Collector, FileState, antigravity_model, consume, defaults, number, stamp
 from pulse.antigravity import decode_metadata, fields
 
 TS = '2026-10-30T02:00:00Z'
@@ -28,6 +28,12 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual((d['input_tokens'], d['output_tokens'], d['reasoning_output_tokens'], d['cached_input_tokens']), (1000, 90, 30, 500))
         self.assertEqual(d['seconds'], 3)
         with self.assertRaises(ValueError): fields(b'\x4a\xff')
+    def test_antigravity_model_aliases(self):
+        self.assertEqual(antigravity_model(1401, {'1401': 'Custom'}, 'Auto Name'), 'Custom')
+        self.assertEqual(antigravity_model(1401, {}, 'Claude Opus 5.5 (Medium)'), 'Claude Opus 5.5 (Medium)')
+        self.assertEqual(antigravity_model(1319, {}), '未命名模型 #1319')
+        self.assertEqual(antigravity_model(0, {}), '')
+
     def test_epoch_milliseconds_and_iso_are_equivalent(self):
         self.assertEqual(stamp(1793325600000), stamp(TS))
         self.assertEqual(stamp(1793325600), stamp(TS))
@@ -81,15 +87,24 @@ class ParsingTests(unittest.TestCase):
 class FileTests(unittest.TestCase):
     def test_antigravity_active_wal_updates(self):
         with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp)/'session.db'
+            conv = Path(tmp)/'conversations'; conv.mkdir()
+            p = conv/'session.db'
             con = sqlite3.connect(p)
             con.execute('PRAGMA journal_mode=WAL')
             con.execute('CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB)')
             con.execute('INSERT INTO steps VALUES (?, ?)', (1, gravity_metadata()))
             con.commit()
-            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['roots']['Antigravity']=[tmp]
+            tr = Path(tmp)/'brain/session/.system_generated/logs/transcript.jsonl'
+            tr.parent.mkdir(parents=True, exist_ok=True)
+            tr.write_text(json.dumps({
+                'step_index': 0, 'type': 'USER_INPUT',
+                'content': '<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Claude Opus 5.5 (Medium). No need to comment'
+            }) + '\n')
+            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['roots']['Antigravity']=[str(conv)]
             c = Collector(cfg)
-            self.assertEqual(c.scan()['Antigravity']['requests'][0].output, 90)
+            req = c.scan()['Antigravity']['requests'][0]
+            self.assertEqual(req.output, 90)
+            self.assertEqual(req.model, 'Claude Opus 5.5 (Medium)')
             con.execute('UPDATE steps SET metadata=?', (gravity_metadata(120),));con.commit()
             self.assertEqual(c.scan()['Antigravity']['requests'][0].output, 120)
             self.assertEqual(len(c.scan()['Antigravity']['requests']), 1)

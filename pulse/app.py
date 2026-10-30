@@ -123,6 +123,10 @@ def load_config():
                     c[key][app] = paths
         if 'interval' in saved:
             c['interval'] = saved['interval']
+        models = saved.get('antigravity_models', {})
+        if isinstance(models, dict):
+            c['antigravity_models'] = {str(k): v.strip() for k, v in models.items()
+                                       if str(k).isdigit() and isinstance(v, str) and v.strip()}
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     return c
@@ -130,6 +134,20 @@ def load_config():
 
 def copy_config(config):
     return json.loads(json.dumps(config))
+
+
+def parse_model_names(text):
+    """Parse lines like '1401 = Claude Opus 5.5' into {'1401': 'Claude Opus 5.5'}."""
+    names = {}
+    for line in text.splitlines():
+        number, sep, name = line.partition('=')
+        if sep and number.strip().isdigit() and name.strip():
+            names[number.strip()] = name.strip()
+    return names
+
+
+def format_model_names(names):
+    return '\n'.join(f'{k} = {v}' for k, v in sorted(names.items(), key=lambda kv: int(kv[0])))
 
 
 def app_icon():
@@ -535,7 +553,7 @@ class Pulse(QMainWindow):
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setMinimumHeight(185)
-        for col, width in enumerate([150, 120, 180, 108, 108, 95]):
+        for col, width in enumerate([140, 100, 210, 96, 92, 84]):
             t.setColumnWidth(col, width)
         t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         t.horizontalHeader().setMinimumSectionSize(70)
@@ -754,7 +772,18 @@ class Pulse(QMainWindow):
             imports.setMaximumHeight(85)
             form.addWidget(imports)
             if app == 'Antigravity':
-                hint = '反重力读取 conversations 下的 SQLite；模型暂显示原始编号。'
+                hint = '反重力读取 conversations 下的 SQLite。'
+                form.addWidget(label('模型名称（每行：编号 = 名称）', 'section'))
+                model_names = QTextEdit()
+                model_names.setPlaceholderText('1401 = Claude Opus 5.5')
+                model_names.setPlainText(format_model_names(config.get('antigravity_models', {})))
+                model_names.setMaximumHeight(85)
+                form.addWidget(model_names)
+                seen = sorted({r.model.removeprefix('未命名模型 #') for r in self.data.get(app, {}).get('requests', [])
+                               if r.model.startswith('未命名模型 #')}, key=int)
+                if seen:
+                    hint += ' 尚未命名的编号：' + '、'.join(seen) + '。'
+                hint += ' 模型名称自动从同目录 brain 日志读取；若日志缺失可在此手动补充或覆盖。'
             else:
                 hint = 'Codex / Claude / WorkBuddy 选择会话目录；Reasonix 选择 stats 目录。'
             note = label(hint, 'muted')
@@ -776,6 +805,7 @@ class Pulse(QMainWindow):
             for app, (roots, imports) in fields.items():
                 config['roots'][app] = lines(roots)
                 config['imports'][app] = lines(imports)
+            config['antigravity_models'] = parse_model_names(model_names.toPlainText())
             try:
                 self.save_config(config)
                 win.accept()

@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from .antigravity import read_database
+from .antigravity import read_database, transcript_path
 
 APPS = ('Codex', 'Claude', 'Reasonix', 'Antigravity', 'WorkBuddy')
 
@@ -68,7 +68,13 @@ def defaults():
         'Reasonix': [str(a / 'reasonix/stats')],
         'Antigravity': [str(h / '.gemini/antigravity/conversations')],
         'WorkBuddy': [str(h / '.workbuddy/projects')],
-    }, 'imports': {app: [] for app in APPS}, 'interval': 3}
+    }, 'imports': {app: [] for app in APPS}, 'interval': 3, 'antigravity_models': {}}
+
+def antigravity_model(number, aliases, detected=''):
+    """Resolve Antigravity's placeholder enum (e.g. 1401 = MODEL_PLACEHOLDER_M401)
+    using user aliases first, then names extracted from companion transcript logs."""
+    if not number and not detected: return ''
+    return aliases.get(str(number)) or detected or f'未命名模型 #{number}'
 
 def usage_request(app, key, timestamp, usage, model='', seconds=None, timing='unavailable'):
     return Request(str(key), app, stamp(timestamp), str(model)[:160],
@@ -191,11 +197,21 @@ class Collector:
                     if generic == 'sqlite':
                         wal = Path(str(path) + '-wal')
                         walstat = wal.stat() if wal.exists() else None
-                        dbsig = (st.st_mtime_ns, st.st_size, walstat.st_mtime_ns if walstat else 0, walstat.st_size if walstat else 0)
+                        tr = transcript_path(path)
+                        trstat = tr.stat() if tr.exists() else None
+                        dbsig = (st.st_mtime_ns, st.st_size,
+                                 walstat.st_mtime_ns if walstat else 0, walstat.st_size if walstat else 0,
+                                 trstat.st_mtime_ns if trstat else 0, trstat.st_size if trstat else 0)
                         if state.context.get('dbsig') != dbsig:
                             new_rows = {}
+                            aliases = self.config.get('antigravity_models') or {}
+                            learned = self.files.setdefault(('antigravity_names',), {})
                             for d in read_database(path):
-                                r = usage_request(app, d['id'], d['timestamp'], d, '模型编号 ' + str(d['model']),
+                                if d.get('model') and d.get('model_name'):
+                                    learned[str(d['model'])] = d['model_name']
+                                detected = d.get('model_name') or learned.get(str(d.get('model')), '')
+                                r = usage_request(app, d['id'], d['timestamp'], d,
+                                                  antigravity_model(d['model'], aliases, detected),
                                                   d['seconds'], 'step_elapsed_estimate' if d['seconds'] else 'unavailable')
                                 new_rows[r.key] = r
                             state.requests = new_rows
@@ -240,5 +256,5 @@ class Collector:
             else: status = '未找到数据 · 可设置路径或导入'
             result[app] = {'status': status, 'requests': rows, 'files': len(paths),
                            'latest': latest, 'errors': errors, 'detected': bool(existing)}
-        self.files = {k: v for k, v in self.files.items() if k in live_keys}
+        self.files = {k: v for k, v in self.files.items() if k in live_keys or k == ('antigravity_names',)}
         return result

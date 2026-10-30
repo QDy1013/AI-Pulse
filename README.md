@@ -24,7 +24,7 @@ Qt 依赖采用开放目录形式打包，请保留 EXE 同级的 `_internal` �
 | Codex | `~/.codex/sessions/**/*.jsonl` | 支持新版 usage 记录与旧版累计事件 | 有起止事件时估算请求耗时速度 |
 | Claude Code / 桌面端 Code 会话 | `~/.claude/projects/**/*.jsonl` 等 | 支持 assistant message usage，同一 message 去重 | 有起止事件时估算请求耗时速度 |
 | Reasonix | `%APPDATA%/reasonix/stats/*.jsonl` | 支持 prompt/completion/reasoning/cache_hit | 原始 stats 未给出单次耗时，显示不可用 |
-| Antigravity | `~/.gemini/antigravity/conversations/*.db` | 读取 steps.metadata 中的 ModelUsageStats protobuf 字段 | 有步骤起止时间时估算；模型暂显示原始编号 |
+| Antigravity | `~/.gemini/antigravity/conversations/*.db` | 读取 steps.metadata 中的 ModelUsageStats protobuf 字段 | 有步骤起止时间时估算；自动从伴随日志读取模型名 |
 | WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` | 支持 providerData.usage，用 messageId 去重 | 原生记录未给出单次耗时，显示不可用；可导入含耗时标准记录 |
 
 各工具格式会变化；这里支持的是上表记录格式，不是对任意 AI 软件都自动抓取。Claude 普通网页聊天也不属于 Claude Code 日志覆盖范围。界面会如实显示已接入、待记录或未找到。空范围总量为 0 表示没有可统计记录，不代表对应软件实际消耗为零。
@@ -35,7 +35,9 @@ Token 数来自本地记录，未按文字长度猜测。思考 Token 通常是�
 
 **速度不是模型纯解码速度**。Codex 根据任务起点（后续请求按上一响应时间）到 usage 事件时间估算；Claude 根据最近 user / api-request 事件到 assistant 记录时间估算。可能包含排队、网络、工具执行和等待，界面以 `≈` 标识。平均速度为有耗时请求的输出 Token 总和除以其耗时总和，不把无耗时请求纳入。跨软件重叠请求按各自耗时求和，并非墙钟吞吐量。导入的 duration_ms 按来源提供的数值计算。
 
-Antigravity 的字段编号根据应用自带协议定义核对，只读取 metadata 计量信息；速度采用步骤 started_at（缺失时 created_at）到 finished_generating_at（缺失时 completed_at）。数据库以只读模式访问并读取 WAL 更新。模型 enum 未映射成人类名称；格式不匹配时显示待记录或读取异常，不按字节值猜测用量。
+Antigravity 的字段编号根据应用自带协议定义核对，只读取 metadata 计量信息；速度采用步骤 started_at（缺失时 created_at）到 finished_generating_at（缺失时 completed_at）。数据库以只读模式访问并读取 WAL 更新。格式不匹配时显示待记录或读取异常，不按字节值猜测用量。
+
+**Antigravity 模型名**：`steps.metadata` 中仅记录占位枚举编号（如 `1401`），程序会自动读取同会话 `brain/<会话ID>/.system_generated/logs/transcript.jsonl` 中的模型切换事件（`Model Selection`）还原真实模型名，并在缺失日志时复用已识别的编号映射。若伴随日志被清理，也可在“数据源 → 反重力 → 模型名称”中按 `编号 = 名称` 手动补充或覆盖。
 
 ## 直接运行
 
