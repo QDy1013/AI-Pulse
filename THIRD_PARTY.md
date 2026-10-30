@@ -1,5 +1,10 @@
 # Third-party components
 
+Reasonix session timing additionally uses the unmodified `zstandard` Python
+package (0.25.0), distributed under its upstream license. Sources and license:
+https://github.com/indygreg/python-zstandard . The original Reasonix application
+code and protocol descriptors are not redistributed.
+
 AI Pulse application code is MIT licensed. Third-party components retain their
 own licenses and copyright notices.
 

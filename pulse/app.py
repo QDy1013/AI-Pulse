@@ -1387,7 +1387,8 @@ class Pulse(QMainWindow):
         signature = (datetime.now().date(),) + tuple(
             (a, d['status'], d['errors'], len(d['requests']),
              d['requests'][-1].timestamp if d['requests'] else 0,
-             sum(r.output for r in d['requests']), (d.get('limits') or {}).get('t'))
+             sum(r.output for r in d['requests']), (d.get('limits') or {}).get('t'),
+             sum(r.seconds or 0 for r in d['requests']))
             for a, d in data.items())
         if signature == self.signature:
             # Quota windows can reset without new records; checking twice a minute is plenty.

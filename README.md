@@ -45,13 +45,15 @@ Qt 依赖采用开放目录形式打包，请保留 EXE 同级的 `_internal` �
 | --- | --- | --- | --- |
 | Codex | `~/.codex/sessions/**/*.jsonl` | 支持新版 usage 记录与旧版累计事件 | 有起止事件时估算请求耗时速度 |
 | Claude Code / 桌面端 Code 会话 | `~/.claude/projects/**/*.jsonl` 等 | 支持 assistant message usage，同一 message 去重 | 有起止事件时估算请求耗时速度 |
-| Reasonix | `%APPDATA%/reasonix/stats/*.jsonl` | 支持 prompt/completion/reasoning/cache_hit 与账单估值 | 原始 stats 未给出单次耗时，显示不可用 |
+| Reasonix | `%APPDATA%/reasonix/stats/*.jsonl`，自动关联同目录下的 v5 会话事件 | 支持 prompt/completion/reasoning/cache_hit 与账单估值 | 匹配已提交会话的工作耗时后计算；无法明确匹配的记录显示不可用 |
 | Antigravity | `~/.gemini/antigravity/conversations/*.db` | 读取 steps.metadata 中的 ModelUsageStats protobuf 字段 | 有步骤起止时间时估算；自动从伴随日志读取模型名 |
 | WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` | 支持 providerData.usage，用 messageId 去重 | 有起止事件时估算请求耗时速度 |
 
 各工具格式会变化；这里支持的是上表记录格式，不是对任意 AI 软件都自动抓取。Claude 普通网页聊天也不属于 Claude Code 日志覆盖范围。界面会如实显示已接入、待记录或未找到。空范围总量为 0 表示没有可统计记录，不代表对应软件实际消耗为零。
 
 ### 统计口径
+
+**Reasonix 速度**：从 `stats` 的同级 `desktop-sessions-v5/by-id/*/events.frames` 只读解析已提交的 RX4F / Zstandard 会话事件。`workDurationMs` 为同一轮对话内累计工作耗时，按助手响应在该轮中的增量计算单次耗时，再用模型与输入 / 输出 / 思考用量严格匹配统计记录。ULID 时间只用于匹配范围校验，不用来计算速度。重复候选、外置或缺失的消息计时、旧版不含响应诊断的会话继续显示 `—`。该速度包含记录中的工作、等待或重试耗时，并非纯模型解码速度。仅补充耗时，不重复加入会话中的 Token。
 
 Token 数来自本地记录，未按文字长度猜测。思考 Token 通常是输出 Token 的子集，不重复相加。Claude 输入包含普通输入、缓存读取和缓存写入。
 

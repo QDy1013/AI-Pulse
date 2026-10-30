@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from .antigravity import read_database, transcript_path
+from .reasonix import Timings
 
 APPS = ('Codex', 'Claude', 'Reasonix', 'Antigravity', 'WorkBuddy')
 
@@ -256,6 +257,7 @@ class Collector:
     def __init__(self, config=None):
         self.config = config or defaults()
         self.files = {}
+        self.reasonix_timings = Timings()
 
     def scan(self):
         result, live_keys = {}, set()
@@ -347,6 +349,8 @@ class Collector:
                     continue
                 if r.key not in unique or r.output >= unique[r.key].output: unique[r.key] = r
             rows = sorted(unique.values(), key=lambda r: r.timestamp)
+            if app == 'Reasonix':
+                errors += self.reasonix_timings.annotate(rows, roots)
             if rows: status = '已接入 · 本地用量记录'
             elif existing and app == 'Antigravity': status = '检测到会话 · 尚无可读取的用量记录'
             elif existing: status = '已找到目录 · 等待用量记录'
