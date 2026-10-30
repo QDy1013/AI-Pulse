@@ -3,8 +3,9 @@ import tempfile
 import unittest
 import sqlite3
 from pathlib import Path
-from pulse.collector import Collector, FileState, antigravity_model, consume, defaults, number, stamp
+from pulse.collector import Collector, FileState, Request, antigravity_model, consume, defaults, number, stamp
 from pulse.antigravity import decode_metadata, fields
+from pulse.pricing import estimate_usd, format_custom_rates, parse_custom_rates
 
 TS = '2026-10-30T02:00:00Z'
 
@@ -63,15 +64,39 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(len(s.requests), 1)
         self.assertEqual(s.requests['msg1'].output, 30)
         self.assertEqual(s.requests['msg1'].input, 32)
+        self.assertEqual(s.requests['msg1'].cache_write, 20)
         self.assertAlmostEqual(s.requests['msg1'].seconds, 4.0)
 
     def test_reasonix_no_invented_timing(self):
         s = FileState()
-        consume('Reasonix', {'ts':TS,'model':'deepseek-flash-c17feb32f2d068d3bd8c9f2c779f0793/deepseek-v4-flash','completion':50,'prompt':100,'reasoning':20}, s)
-        r = next(iter(s.requests.values()))
+        consume('Reasonix', {'id':'rx1','ts':TS,'model':'deepseek-flash-c17feb32f2d068d3bd8c9f2c779f0793/deepseek-v4-flash','completion':50,'prompt':100,'reasoning':20,'valuation_usd':'0.00125','cost_complete':True}, s)
+        consume('Reasonix', {'id':'rx2','ts':TS,'model':'deepseek-v4-flash','completion':50,'prompt':100,'valuation_usd':'0','cost_complete':False}, s)
+        r = s.requests['rx1']
         self.assertIsNone(r.speed)
         self.assertEqual(r.output, 50)
         self.assertEqual(r.model, 'deepseek-v4-flash')
+        self.assertAlmostEqual(r.cost_usd, 0.00125)
+        self.assertIsNone(s.requests['rx2'].cost_usd)
+
+    def test_api_quota_pricing_and_custom_overrides(self):
+        # Claude: input is inclusive (2 uncached + 10 cached + 20 cache_write), reasoning inside output.
+        claude_req = Request('c1', 'Claude', 0, 'claude-opus-5-5', input=32, output=30, reasoning=15, cached=10, cache_write=20)
+        actual, full = estimate_usd(claude_req)
+        self.assertAlmostEqual(actual, (2 * 4.0 + 10 * 0.2 + 20 * 8.0 + 30 * 20.0) / 1_000_000)
+        self.assertAlmostEqual(full, (32 * 4.0 + 30 * 20.0) / 1_000_000)
+
+        # Antigravity: input (field 2) and cached (field 5) are disjoint buckets.
+        ag_req = Request('a1', 'Antigravity', 0, 'Claude Opus 5.5 (Medium)', input=1000, output=90, reasoning=30, cached=500)
+        ag_actual, ag_full = estimate_usd(ag_req)
+        self.assertAlmostEqual(ag_actual, (1000 * 4.0 + 500 * 0.2 + 90 * 20.0) / 1_000_000)
+        self.assertAlmostEqual(ag_full, (1500 * 4.0 + 90 * 20.0) / 1_000_000)
+
+        # Reasonix: honors reported valuation_usd unless overridden by custom_rates.
+        rx_req = Request('r1', 'Reasonix', 0, 'deepseek-v4-flash', input=1000, output=500, cached=500, cost_usd=0.005)
+        self.assertAlmostEqual(estimate_usd(rx_req)[0], 0.005)
+        custom = parse_custom_rates('deepseek-v4 = 1.0, 0.1, 2.0\ninvalid line\n')
+        self.assertEqual(format_custom_rates(custom), 'deepseek-v4 = 1, 0.1, 2')
+        self.assertAlmostEqual(estimate_usd(rx_req, custom)[0], (500 * 1.0 + 500 * 0.1 + 500 * 2.0) / 1_000_000)
 
     def test_unknown_schema_ignored(self):
         s = FileState()

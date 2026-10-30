@@ -30,6 +30,15 @@ def number(value):
     except (ValueError, TypeError):
         return 0
 
+def optional_usd(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        n = float(value)
+        return n if math.isfinite(n) and n >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
 @dataclass
 class Request:
     key: str
@@ -42,6 +51,8 @@ class Request:
     cached: int = 0
     seconds: float | None = None
     timing: str = 'unavailable'
+    cache_write: int = 0
+    cost_usd: float | None = None
 
     @property
     def speed(self):
@@ -69,7 +80,8 @@ def defaults():
         'Reasonix': [str(a / 'reasonix/stats')],
         'Antigravity': [str(h / '.gemini/antigravity/conversations')],
         'WorkBuddy': [str(h / '.workbuddy/projects')],
-    }, 'imports': {app: [] for app in APPS}, 'interval': 3, 'antigravity_models': {}}
+    }, 'imports': {app: [] for app in APPS}, 'interval': 3,
+       'antigravity_models': {}, 'usd_to_cny': 7.15, 'model_rates': {}}
 
 def antigravity_model(number, aliases, detected=''):
     """Resolve Antigravity's placeholder enum (e.g. 1401 = MODEL_PLACEHOLDER_M401)
@@ -77,11 +89,13 @@ def antigravity_model(number, aliases, detected=''):
     if not number and not detected: return ''
     return aliases.get(str(number)) or detected or f'未命名模型 #{number}'
 
-def usage_request(app, key, timestamp, usage, model='', seconds=None, timing='unavailable'):
+def usage_request(app, key, timestamp, usage, model='', seconds=None, timing='unavailable',
+                  cache_write=0, cost_usd=None):
     return Request(str(key), app, stamp(timestamp), str(model)[:160],
                    int(number(usage.get('input_tokens'))), int(number(usage.get('output_tokens'))),
                    int(number(usage.get('reasoning_output_tokens'))),
-                   int(number(usage.get('cached_input_tokens'))), seconds, timing)
+                   int(number(usage.get('cached_input_tokens'))), seconds, timing,
+                   int(number(cache_write)), cost_usd)
 
 def consume(app, d, state, generic=False):
     """Normalize known schemas. Duplicate snapshots replace the same request."""
@@ -90,8 +104,10 @@ def consume(app, d, state, generic=False):
         if d.get('schema') != 'ai-pulse/v1' or not d.get('id') or not stamp(d.get('timestamp')):
             return
         seconds = number(d.get('duration_ms')) / 1000 or None
-        r = usage_request(app, d['id'], d['timestamp'], d.get('usage', {}), d.get('model', ''), seconds,
-                          'reported' if seconds else 'unavailable')
+        u = d.get('usage') or {}
+        r = usage_request(app, d['id'], d['timestamp'], u, d.get('model', ''), seconds,
+                          'reported' if seconds else 'unavailable',
+                          u.get('cache_write_input_tokens', 0), optional_usd(d.get('cost_usd')))
         out[r.key] = r
         return
     t = d.get('type')
@@ -115,7 +131,8 @@ def consume(app, d, state, generic=False):
             seconds = stamp(ts) - start if start else 0
             key = p.get('response_id') or ('record:' + str(d.get('ordinal', ts)))
             r = usage_request(app, key, ts, u, c.get('model', ''), seconds if seconds > 0 else None,
-                              'turn_elapsed_estimate' if seconds > 0 else 'unavailable')
+                              'turn_elapsed_estimate' if seconds > 0 else 'unavailable',
+                              u.get('cache_write_input_tokens', 0))
             out[r.key] = r
             # Next request elapsed time starts after the previous response, includes tools/waiting.
             c['start'] = stamp(ts)
@@ -126,7 +143,8 @@ def consume(app, d, state, generic=False):
             delta = {k: max(0, number(v) - number(prev.get(k))) for k, v in total.items()}
             c['total'] = total
             if not any(delta.values()): return
-            r = usage_request(app, 'legacy:' + str(ts), ts, delta, c.get('model', ''))
+            r = usage_request(app, 'legacy:' + str(ts), ts, delta, c.get('model', ''),
+                              cache_write=delta.get('cache_write_input_tokens', 0))
             out[r.key] = r
     elif app == 'Claude':
         if t == 'user' or t == 'api-request': c['start'] = stamp(ts)
@@ -135,6 +153,7 @@ def consume(app, d, state, generic=False):
         u = m.get('usage')
         if not isinstance(u, dict) or not m.get('id'): return
         # Claude input excludes cache read/write; normalize to inclusive input.
+        raw_cw = int(number(u.get('cache_creation_input_tokens')))
         u = dict(u)
         u['input_tokens'] = sum(number(u.get(k)) for k in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
         u['cached_input_tokens'] = u.get('cache_read_input_tokens', 0)
@@ -149,7 +168,7 @@ def consume(app, d, state, generic=False):
         if old and old.output > number(u.get('output_tokens')): return
         seconds = stamp(ts) - start if start else 0
         r = usage_request(app, key, ts, u, m.get('model', ''), seconds if seconds > 0 else None,
-                          'turn_elapsed_estimate' if seconds > 0 else 'unavailable')
+                          'turn_elapsed_estimate' if seconds > 0 else 'unavailable', raw_cw)
         out[r.key] = r
     elif app == 'WorkBuddy':
         pd = d.get('providerData') or {}
@@ -181,8 +200,12 @@ def consume(app, d, state, generic=False):
         u = {'input_tokens': prompt, 'output_tokens': d.get('completion'),
              'reasoning_output_tokens': d.get('reasoning'), 'cached_input_tokens': d.get('cache_hit')}
         model = re.sub(r'^[^/]*-[0-9a-f]{16,}/', '', str(d.get('model') or ''))
+        raw_cost = d.get('valuation_usd') if d.get('valuation_usd') is not None else (
+            d.get('cost_amount') if d.get('cost_currency') == 'USD' else None)
+        parsed_cost = optional_usd(raw_cost) if d.get('cost_complete', True) is not False else None
+        cost_usd = parsed_cost if (parsed_cost and parsed_cost > 0) else None
         key = str(d.get('id') or (str(d['ts']) + ':' + str(d.get('model', '')) + ':' + str(d.get('source', '')) + ':' + str(state.offset)))
-        out[key] = usage_request(app, key, d['ts'], u, model)
+        out[key] = usage_request(app, key, d['ts'], u, model, cost_usd=cost_usd)
 
 class Collector:
     def __init__(self, config=None):

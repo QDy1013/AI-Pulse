@@ -1,20 +1,21 @@
 # AI Pulse
 
-一个本地运行的 Windows AI 用量监控桌面应用。用同一个面板查看不同 AI 编程工具的 Token 用量、请求记录与速度趋势。应用源码 MIT 开源。
+一个本地运行的 Windows AI 用量监控桌面应用。用同一个面板查看不同 AI 编程工具的 Token 用量、API 额度折算、请求记录与速度趋势。应用源码 MIT 开源。
 
 ## v0.2 界面更新
 
-界面迁移到 Qt 原生高 DPI 渲染。取消为适应屏幕而整体缩小界面的处理，字体和图表按显示器缩放比例绘制。使用更清楚的字号与对比度、四列指标卡、矢量曲线与悬停提示、软件输出分布和更宽松的请求表格。小屏幕使用滚动区域，不压缩文字。
+界面迁移到 Qt 原生高 DPI 渲染。取消为适应屏幕而整体缩小界面的处理，字体和图表按显示器缩放比例绘制。采用中性深色灰阶界面与沉浸式深色窗口边框、五列指标卡（含 API 额度与人民币折算）、矢量曲线与悬停提示、软件 / 模型分布和请求明细表格。小屏幕使用滚动区域，不压缩文字。
 
 Qt 依赖采用开放目录形式打包，请保留 EXE 同级的 `_internal` 文件夹；不要只复制 EXE。
 
 ## 功能
 
-- 原生桌面窗口，深色界面，支持窗口缩放。
+- 原生桌面窗口，中性深色界面（自动覆盖 Windows 11 蓝色活动边框），支持窗口缩放。
 - 按软件、今天 / 近 7 天 / 全部记录筛选。
 - 输出 / 输入 / 思考 / 缓存读取 Token、最近请求与加权平均速度。
+- 本地 Token 用量自动折算为官方公开 API 美元额度（`$`）与人民币金额（`¥`），直观展示各软件、各模型与单次请求的等效额度及缓存节省金额，支持自定义汇率与模型单价。
 - 每 3 秒检查本地记录，增量读取新增行，支持暂停。
-- 修改记录目录，导入标准 JSONL，导出 CSV。
+- 修改记录目录，导入标准 JSONL，导出含折算额度的 CSV。
 - 完全离线运行，无遥测、无联网服务、无需 API Key。
 
 ## 支持范围（v0.2.0）
@@ -23,7 +24,7 @@ Qt 依赖采用开放目录形式打包，请保留 EXE 同级的 `_internal` �
 | --- | --- | --- | --- |
 | Codex | `~/.codex/sessions/**/*.jsonl` | 支持新版 usage 记录与旧版累计事件 | 有起止事件时估算请求耗时速度 |
 | Claude Code / 桌面端 Code 会话 | `~/.claude/projects/**/*.jsonl` 等 | 支持 assistant message usage，同一 message 去重 | 有起止事件时估算请求耗时速度 |
-| Reasonix | `%APPDATA%/reasonix/stats/*.jsonl` | 支持 prompt/completion/reasoning/cache_hit | 原始 stats 未给出单次耗时，显示不可用 |
+| Reasonix | `%APPDATA%/reasonix/stats/*.jsonl` | 支持 prompt/completion/reasoning/cache_hit 与账单估值 | 原始 stats 未给出单次耗时，显示不可用 |
 | Antigravity | `~/.gemini/antigravity/conversations/*.db` | 读取 steps.metadata 中的 ModelUsageStats protobuf 字段 | 有步骤起止时间时估算；自动从伴随日志读取模型名 |
 | WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` | 支持 providerData.usage，用 messageId 去重 | 有起止事件时估算请求耗时速度 |
 
@@ -38,6 +39,8 @@ Token 数来自本地记录，未按文字长度猜测。思考 Token 通常是�
 Antigravity 的字段编号根据应用自带协议定义核对，只读取 metadata 计量信息；速度采用步骤有效起点（started_at 早于结束时间时取 started_at，否则取步骤创建起点 created_at）到 finished_generating_at（缺失时 completed_at）。数据库以只读模式访问并读取 WAL 更新。格式不匹配时显示待记录或读取异常，不按字节值猜测用量。
 
 **Antigravity 模型名**：`steps.metadata` 中仅记录占位枚举编号（如 `1401`），程序会自动读取同会话 `brain/<会话ID>/.system_generated/logs/transcript.jsonl` 中的模型切换事件（`Model Selection`）还原真实模型名，并在缺失日志时复用已识别的编号映射。若伴随日志被清理，也可在“数据源 → 反重力 → 模型名称”中按 `编号 = 名称` 手动补充或覆盖。
+
+**API 额度与费用折算**：内置 OpenAI / Codex、Claude、Gemini、DeepSeek、Kimi、GLM、Qwen 等常用模型公开 API 单价（美元 / 百万 Token），按普通输入、缓存读取、缓存写入（Claude）与输出 Token 分别折算（Antigravity 的普通输入与缓存读取字段独立计费；Reasonix 含有完整 `valuation_usd` 时优先采用原始估值；思考 Token 已含在输出内，不重复计费）。可在“数据源 → API 计费”自定义美元兑人民币汇率与任意模型单价。会员订阅或赠金渠道的实际扣费以各平台账单为准。
 
 ## 直接运行
 
@@ -71,7 +74,7 @@ python -m PyInstaller --noconfirm --clean AI-Pulse.spec
 {"schema":"ai-pulse/v1","id":"unique-request-id","timestamp":"2026-10-30T10:00:00+08:00","model":"example-model","duration_ms":2000,"usage":{"input_tokens":1000,"output_tokens":100,"reasoning_output_tokens":20,"cached_input_tokens":500}}
 ```
 
-`timestamp` 须使用带时区 ISO 8601；`duration_ms` 可省略，缺失时不计算速度。输入 / 输出 / 思考 / 缓存均为非负整数。`reasoning_output_tokens` 是输出的子集。导入接口不是对目标软件的自动抓取，需由数据提供方产生真实记录。
+`timestamp` 须使用带时区 ISO 8601；`duration_ms` 与 `cost_usd` 可省略，缺失 `duration_ms` 时不计算速度。输入 / 输出 / 思考 / 缓存均为非负整数。`reasoning_output_tokens` 是输出的子集。导入接口不是对目标软件的自动抓取，需由数据提供方产生真实记录。
 
 ## 数据与隐私
 

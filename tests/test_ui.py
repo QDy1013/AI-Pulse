@@ -17,13 +17,18 @@ class DesktopTests(unittest.TestCase):
     def setUp(self):
         self.window=Pulse();self.window.timer.stop()
         now=time.time()
-        data={a:{'requests':[Request(a,a,now,'test-model',output=100*(i+1),seconds=5)],'errors':0,'status':'测试来源'} for i,a in enumerate(APPS)}
-        data['Codex']['requests'].append(Request('old','Codex',now-10*86400,'test-model',output=999))
+        data={a:{'requests':[Request(a,a,now,'test-model',input=500,output=100*(i+1),cached=200,seconds=5)],'errors':0,'status':'测试来源'} for i,a in enumerate(APPS)}
+        data['Codex']['requests'].append(Request('old','Codex',now-10*86400,'test-model',input=1000,output=999))
         self.window.received(data);self.window.resize(1100,740);self.window.show()
 
     def tearDown(self):self.window.close()
 
     def test_filter_preserves_totals_and_pause_controls(self):
+        self.assertEqual(len(self.window.cards),5)
+        self.assertEqual(self.window.table.columnCount(),7)
+        self.assertTrue(self.window.cards[4].value.text().startswith('$'))
+        self.assertIn('¥',self.window.cards[4].detail.text())
+        self.assertTrue(self.window.table.item(0,6).text().startswith('$'))
         self.assertEqual(sum(r.output for r in self.window.rows),1500)
         QTest.mouseClick(self.window.nav['WorkBuddy'],Qt.MouseButton.LeftButton)
         self.assertEqual(len(self.window.rows),1)
