@@ -25,6 +25,17 @@ be rebuilt with a modified version of the dependencies. Reverse engineering
 needed to debug modifications to LGPL components is permitted to the extent
 required by their license. No Qt or PySide source modifications are included.
 
+## Segno 1.6.6
+
+QR codes for the phone link are generated with Segno (https://github.com/heuer/segno),
+Copyright (c) 2016 - 2025, Lars Heuer, under the BSD 3-Clause license. The license
+text is in `licenses/segno-BSD-3-Clause.txt`.
+
+## cloudflared (not bundled)
+
+External access uses Cloudflare's `cloudflared` if the user installs it separately.
+It is not redistributed with AI Pulse.
+
 ## Python and packager
 
 The binary includes the CPython runtime under the Python Software Foundation

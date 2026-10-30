@@ -237,4 +237,38 @@ class FileTests(unittest.TestCase):
             self.assertEqual(result['errors'], 1)
             self.assertEqual(len(c.scan()['Codex']['requests']), 2)
 
+    def test_codex_quota_snapshot_and_project(self):
+        def limits(used, at):
+            return {'type':'event_msg','timestamp':at,'payload':{'type':'token_count','info':None,'rate_limits':{
+                'limit_id':'codex','plan_type':'plus',
+                'primary':{'used_percent':used,'window_minutes':300,'resets_at':1793346840},
+                'secondary':{'used_percent':11.0,'window_minutes':10080,'resets_in_seconds':3600}}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            older = [{'type':'session_meta','timestamp':TS,'payload':{'cwd':'C:\\work\\alpha'}}, limits(30.0, '2026-10-30T02:00:00Z'),
+                     {'type':'token_usage_record','timestamp':TS,'payload':{'response_id':'r1','usage':{'output_tokens':10}}}]
+            newer = [limits(47.0, '2026-10-30T03:00:00Z'),
+                     # Other limit families (e.g. premium models) are not the Codex plan quota.
+                     {'type':'event_msg','timestamp':'2026-10-30T04:00:00Z','payload':{'type':'token_count','rate_limits':{
+                         'limit_id':'premium','primary':{'used_percent':99.0,'window_minutes':300}}}}]
+            (Path(tmp)/'a.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in older))
+            (Path(tmp)/'b.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in newer))
+            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['roots']['Codex']=[tmp]
+            result = Collector(cfg).scan()
+            snap = result['Codex']['limits']
+            self.assertEqual(snap['plan'], 'plus')
+            self.assertEqual([w['used'] for w in snap['windows']], [47.0, 11.0])
+            self.assertEqual(snap['windows'][0]['resets_at'], 1793346840)
+            self.assertEqual(snap['windows'][1]['resets_at'], stamp('2026-10-30T03:00:00Z') + 3600)
+            self.assertEqual(result['Codex']['requests'][0].project, 'C:\\work\\alpha')
+            self.assertIsNone(result['Claude']['limits'])
+
+    def test_claude_project_from_cwd(self):
+        s = FileState()
+        consume('Claude', {'type':'assistant','timestamp':TS,'cwd':'/home/me/beta','message':{'id':'m','usage':{'output_tokens':5}}}, s)
+        self.assertEqual(s.requests['m'].project, '/home/me/beta')
+        w = FileState()
+        consume('WorkBuddy', {'type':'message','role':'user','timestamp':TS,'sessionId':'s','cwd':'c:\\wb\\gamma'}, w)
+        consume('WorkBuddy', {'type':'message','timestamp':TS,'sessionId':'s','providerData':{'messageId':'m','usage':{'outputTokens':3}}}, w)
+        self.assertEqual(w.requests['s:m'].project, 'c:\\wb\\gamma')
+
 if __name__ == '__main__': unittest.main()

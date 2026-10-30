@@ -6,7 +6,7 @@ import unittest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from pulse.app import Pulse, format_model_names, parse_model_names
+from pulse.app import Pulse, format_model_names, parse_model_names, qr_pixmap
 from pulse.collector import APPS, Request
 
 class DesktopTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class DesktopTests(unittest.TestCase):
         self.window=Pulse();self.window.timer.stop()
         now=time.time()
         data={a:{'requests':[Request(a,a,now,'test-model',input=500,output=100*(i+1),cached=200,seconds=5)],'errors':0,'status':'测试来源'} for i,a in enumerate(APPS)}
-        data['Codex']['requests'].append(Request('old','Codex',now-10*86400,'test-model',input=1000,output=999))
+        data['Codex']['requests'].insert(0,Request('old','Codex',now-10*86400,'test-model',input=1000,output=999))
         self.window.received(data);self.window.resize(1100,740);self.window.show()
 
     def tearDown(self):self.window.close()
@@ -58,6 +58,43 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(fresh.period,'全部记录')
         self.assertEqual(len(fresh.rows),1)
         fresh.close()
+
+    def test_remote_status_and_qr(self):
+        self.window.remote.apply({'enabled':False})
+        self.assertIn('未开启',self.window.remote_label.text())
+        pix=qr_pixmap('https://example.trycloudflare.com/?k=abc',230)
+        self.assertFalse(pix.isNull())
+        self.assertEqual(pix.width(),230)
+
+    def test_quota_budget_history_and_projects(self):
+        self.assertTrue(self.window.gauge_row.isHidden())
+        data=dict(self.window.data)
+        data['Codex']=dict(data['Codex'],limits={'t':time.time(),'plan':'plus','windows':[
+            {'minutes':300,'used':95.0,'resets_at':time.time()+3600}]})
+        self.window.collector.config['budget']={'daily_cny':0.0001,'monthly_cny':0}
+        self.window.received(data)
+        visible=[g for g in self.window.gauges if not g.isHidden()]
+        self.assertEqual([g.title.text() for g in visible],['Codex 5 小时','今日预算'])
+        self.assertEqual(visible[0].value.text(),'剩 5%')
+        self.assertEqual(len(self.window.notified),2)
+        self.window.received(data)
+        self.assertEqual(len(self.window.notified),2)  # Each warning fires once per window.
+        self.assertEqual(len(self.window.daily.days),30)
+        self.assertEqual(self.window.daily.days[-1]['count'],5)
+        self.assertEqual(self.window.projects.items[0][0],'未记录目录')
+
+    def test_close_hides_to_tray_until_quit(self):
+        if not self.window.tray:
+            self.skipTest('no system tray on this platform')
+        self.window.close()
+        self.assertTrue(self.window.isHidden())
+        self.assertTrue(self.window.tray.isVisible())
+        self.assertTrue(self.window.tray_hinted)
+        self.window.show_window()
+        self.assertTrue(self.window.isVisible())
+        self.window.quit_app()
+        self.assertTrue(self.window.isHidden())
+        self.assertFalse(self.window.tray.isVisible())
 
     def test_model_name_table_round_trip(self):
         names=parse_model_names('1418 = B\n bad line \n1401 = Claude Opus 5.5\n= x\n')

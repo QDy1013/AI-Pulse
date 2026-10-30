@@ -1,6 +1,8 @@
 """API quota & cost estimation ($ USD equivalent + RMB conversion) per request."""
 from __future__ import annotations
 
+from functools import lru_cache
+
 DEFAULT_USD_TO_CNY = 7.15
 
 # (uncached_input_per_1m, cached_input_per_1m, output_per_1m, cache_write_per_1m) in USD.
@@ -91,6 +93,12 @@ def resolve_rate(app: str, model: str, custom_rates: dict | None = None) -> tupl
             inp, cached, out = float(triple[0]), float(triple[1]), float(triple[2])
             cw = float(triple[3]) if len(triple) >= 4 else inp
             return (inp, cached, out, cw)
+    return default_rate(app, low)
+
+
+@lru_cache(maxsize=2048)
+def default_rate(app: str, low: str) -> tuple[float, float, float, float]:
+    # A handful of distinct model names cover tens of thousands of requests.
     matches = [(p, rate) for p, rate in DEFAULT_MODEL_RATES if p in low]
     if matches:
         return max(matches, key=lambda m: len(m[0]))[1]
@@ -113,7 +121,22 @@ def estimate_usd(req, custom_rates: dict | None = None) -> tuple[float, float]:
 
     Note: reasoning tokens are already included inside output tokens across all
     supported schemas, so output is billed once without double-adding reasoning.
+
+    The result is memoized on the request for this exact rates object: requests are
+    immutable once parsed, and saving settings always installs a new rates dict.
     """
+    memo = getattr(req, '_usd', None)
+    if memo is not None and memo[0] is custom_rates:
+        return memo[1]
+    result = compute_usd(req, custom_rates)
+    try:
+        req._usd = (custom_rates, result)
+    except AttributeError:
+        pass
+    return result
+
+
+def compute_usd(req, custom_rates: dict | None = None) -> tuple[float, float]:
     inp_rate, cache_rate, out_rate, cw_rate = resolve_rate(req.app, req.model, custom_rates)
     uncached, cached, cw = split_input_tokens(req)
     out = max(0, req.output or 0)
