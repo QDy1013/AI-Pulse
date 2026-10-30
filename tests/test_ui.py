@@ -111,6 +111,20 @@ class DesktopTests(unittest.TestCase):
         self.assertTrue(self.window.isHidden())
         self.assertFalse(self.window.tray.isVisible())
 
+    def test_timing_only_updates_refresh_the_visible_speed(self):
+        self.window.select('Reasonix')
+        data={a:dict(d,requests=list(d['requests'])) for a,d in self.window.data.items()}
+        old=data['Reasonix']['requests'][0]
+        first=Request(old.key,old.app,old.timestamp,old.model,input=old.input,output=old.output)
+        data['Reasonix']['requests']=[first]
+        self.window.received(data)
+        self.assertEqual(self.window.cards[0].value.text(),'—')
+        updated={a:dict(d,requests=list(d['requests'])) for a,d in data.items()}
+        updated['Reasonix']['requests']=[Request(old.key,old.app,old.timestamp,old.model,
+            input=old.input,output=old.output,seconds=2)]
+        self.window.received(updated)
+        self.assertEqual(self.window.cards[0].value.text(),'150.0')
+
     def test_model_name_table_round_trip(self):
         names=parse_model_names('1418 = B\n bad line \n1401 = Claude Opus 5.5\n= x\n')
         self.assertEqual(names,{'1418':'B','1401':'Claude Opus 5.5'})
