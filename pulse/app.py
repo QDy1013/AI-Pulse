@@ -9,8 +9,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPointF, QRectF
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPainterPath, QPen, QLinearGradient, QIcon, QPixmap
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QPointF, QRectF, QSize
+from PySide6.QtGui import (
+    QColor, QFont, QFontDatabase, QPainter, QPainterPath, QPen,
+    QLinearGradient, QRadialGradient, QIcon, QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QScrollArea, QButtonGroup, QTableWidget,
@@ -20,9 +23,22 @@ from PySide6.QtWidgets import (
 
 from .collector import APPS, Collector, defaults
 
-BG, PANEL, BORDER, TEXT, MUTED, ACCENT = '#101216', '#191c22', '#2c3039', '#f1f3f7', '#a3abba', '#c2f287'
-COLORS = {'Codex': '#c2f287', 'Claude': '#e9ae91', 'Reasonix': '#b6a7fa', 'Antigravity': '#80baff', 'WorkBuddy': '#78dcc6'}
-DISPLAY = {'Codex': 'Codex', 'Claude': 'Claude Code', 'Reasonix': 'Reasonix', 'Antigravity': '反重力', 'WorkBuddy': 'WorkBuddy'}
+BG, PANEL, BORDER, TEXT, MUTED, ACCENT = '#0d1015', '#161a22', '#262c38', '#f1f4f9', '#949eb0', '#c2f287'
+COLORS = {
+    'Codex': '#c2f287',
+    'Claude': '#f0a986',
+    'Reasonix': '#b8a9ff',
+    'Antigravity': '#7cc0ff',
+    'WorkBuddy': '#6ee2c9',
+}
+DISPLAY = {
+    'Codex': 'Codex',
+    'Claude': 'Claude Code',
+    'Reasonix': 'Reasonix',
+    'Antigravity': '反重力',
+    'WorkBuddy': 'WorkBuddy',
+}
+MODEL_PALETTE = ('#7cc0ff', '#c2f287', '#f0a986', '#b8a9ff', '#6ee2c9')
 
 ALL = '全部软件'
 PERIODS = ('今天', '近 7 天', '全部记录')
@@ -32,41 +48,45 @@ STYLE = f'''
 QWidget {{ color: {TEXT}; font-family: "Microsoft YaHei UI"; font-size: 13px; }}
 QMainWindow, QDialog, QWidget#root, QWidget#content, QWidget#viewport {{ background: {BG}; }}
 QLabel {{ background: transparent; border: none; }}
-QFrame#sidebar {{ background: #15171c; border-right: 1px solid #262a31; }}
+QFrame#sidebar {{ background: #12151c; border-right: 1px solid #222733; }}
 QFrame#panel, QFrame#metric {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 14px; }}
-QFrame#metric[primary="true"] {{ background: #20291d; border: 1px solid #435336; }}
+QFrame#metric[primary="true"] {{ background: #192219; border: 1px solid #3c4f31; }}
 QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
-QLabel#eyebrow {{ color: #8f98aa; font-size: 11px; font-weight: 600; letter-spacing: 2px; }}
-QLabel#heading {{ font-size: 27px; font-weight: 700; }}
-QLabel#section {{ font-size: 14px; font-weight: 600; }}
-QLabel#number {{ font-family: "Segoe UI"; font-size: 34px; font-weight: 600; letter-spacing: -1px; }}
-QLabel#pill {{ color: {ACCENT}; background: #283523; border-radius: 10px; padding: 5px 10px; font-size: 11px; }}
-QPushButton {{ background: #22262e; border: 1px solid #343a45; border-radius: 8px; padding: 8px 13px; font-weight: 500; }}
-QPushButton:hover {{ background: #303641; border-color: #525d6b; }}
-QPushButton:pressed {{ background: #3b4350; }}
+QLabel#eyebrow {{ color: #7e889b; font-size: 11px; font-weight: 700; letter-spacing: 2px; }}
+QLabel#heading {{ font-size: 26px; font-weight: 700; color: #f8fafd; }}
+QLabel#section {{ font-size: 14px; font-weight: 600; color: #eef2f8; }}
+QLabel#unit {{ color: #8c96a9; background: #202632; border: 1px solid #2d3545; border-radius: 9px; padding: 2px 8px; font-family: "Segoe UI"; font-size: 11px; font-weight: 600; }}
+QLabel#unit[primary="true"] {{ color: {ACCENT}; background: #243220; border-color: #3a4f31; }}
+QLabel#number {{ font-family: "Segoe UI"; font-size: 34px; font-weight: 700; letter-spacing: -1px; }}
+QLabel#pill {{ color: {ACCENT}; background: #23301f; border: 1px solid #36492e; border-radius: 10px; padding: 3px 10px; font-size: 11px; font-weight: 600; }}
+QPushButton {{ background: #1d222c; border: 1px solid #2e3646; border-radius: 8px; padding: 7px 14px; font-weight: 500; color: #dce2ec; }}
+QPushButton:hover {{ background: #282f3d; border-color: #49556b; color: white; }}
+QPushButton:pressed {{ background: #323b4c; }}
 QPushButton:disabled {{ color: #6c7483; }}
-QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 9px; padding: 12px; color: #b8bfcb; }}
-QPushButton#nav:hover {{ background: #242830; color: white; }}
-QPushButton#nav:checked {{ background: #2a3524; border-color: #3a4b30; color: {ACCENT}; font-weight: 600; }}
-QPushButton#period {{ background: transparent; border: none; color: #aab2c0; padding: 7px 13px; }}
-QPushButton#period:checked {{ background: #383e48; color: white; }}
-QFrame#segments {{ background: #1e2229; border: 1px solid #303640; border-radius: 10px; }}
-QTableWidget {{ background: transparent; alternate-background-color: #1d2128; border: none; gridline-color: #282d36; selection-background-color: #303d2b; selection-color: white; outline: none; }}
-QHeaderView::section {{ background: #20242c; color: #aeb7c6; border: none; padding: 10px 12px; text-align: left; font-weight: 500; }}
-QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid #282d36; }}
+QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 10px 12px; color: #b2bac9; font-weight: 500; }}
+QPushButton#nav:hover {{ background: #1c212b; color: #f1f4f9; }}
+QPushButton#nav:checked {{ background: #222c1f; border-color: #384a30; color: {ACCENT}; font-weight: 600; }}
+QPushButton#period {{ background: transparent; border: none; border-radius: 7px; color: #9ea7b8; padding: 6px 14px; font-weight: 500; }}
+QPushButton#period:hover {{ color: #e4e9f2; }}
+QPushButton#period:checked {{ background: #2d3544; color: white; font-weight: 600; }}
+QFrame#segments {{ background: #171b24; border: 1px solid #29303e; border-radius: 10px; }}
+QTableWidget {{ background: transparent; alternate-background-color: #1a1f29; border: none; gridline-color: #242a36; selection-background-color: #263323; selection-color: white; outline: none; }}
+QHeaderView::section {{ background: #1b202a; color: #97a2b5; border: none; border-bottom: 1px solid #282f3d; padding: 10px 12px; font-size: 12px; font-weight: 600; }}
+QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid #202632; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 0; }}
-QScrollBar::handle:vertical {{ background: #434b58; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical {{ background: #3b4352; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: #505b6e; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QScrollBar:horizontal {{ height: 8px; background: transparent; }}
-QScrollBar::handle:horizontal {{ background: #434b58; border-radius: 4px; min-width: 30px; }}
-QTextEdit {{ background: #111419; color: {TEXT}; border: 1px solid #3d4654; border-radius: 7px; padding: 8px; selection-background-color: #425338; }}
-QComboBox {{ background: #252b34; border: 1px solid #414a58; border-radius: 7px; padding: 8px; }}
-QTabWidget::pane {{ border: 1px solid #343b47; border-radius: 8px; padding: 10px; }}
-QTabBar::tab {{ background: #222731; padding: 10px 15px; color: #aeb7c6; }}
-QTabBar::tab:selected {{ color: {ACCENT}; background: #303b29; }}
-QToolTip {{ color: {TEXT}; background: #303743; border: 1px solid #566273; padding: 8px; }}
+QScrollBar::handle:horizontal {{ background: #3b4352; border-radius: 4px; min-width: 30px; }}
+QTextEdit {{ background: #101319; color: {TEXT}; border: 1px solid #343d4d; border-radius: 8px; padding: 8px; selection-background-color: #3c4f31; }}
+QComboBox {{ background: #1f2530; border: 1px solid #394354; border-radius: 8px; padding: 8px; }}
+QTabWidget::pane {{ border: 1px solid #2d3442; border-radius: 10px; padding: 10px; background: #151921; }}
+QTabBar::tab {{ background: #1b202a; padding: 9px 15px; color: #9ea7b8; border-top-left-radius: 7px; border-top-right-radius: 7px; margin-right: 3px; }}
+QTabBar::tab:selected {{ color: {ACCENT}; background: #263222; font-weight: 600; }}
+QToolTip {{ color: {TEXT}; background: #232936; border: 1px solid #475368; border-radius: 6px; padding: 8px; }}
 '''
 
 
@@ -155,16 +175,45 @@ def app_icon():
     image.fill(Qt.GlobalColor.transparent)
     p = QPainter(image)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(QColor('#222e1d'))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(QRectF(4, 4, 120, 120), 28, 28)
-    path = QPainterPath(QPointF(20, 67))
-    for x, y in [(43, 67), (53, 34), (73, 93), (85, 57), (108, 57)]:
+    grad = QLinearGradient(0, 0, 128, 128)
+    grad.setColorAt(0, QColor('#263520'))
+    grad.setColorAt(1, QColor('#172015'))
+    p.setBrush(grad)
+    p.setPen(QPen(QColor('#3e5633'), 3))
+    p.drawRoundedRect(QRectF(6, 6, 116, 116), 28, 28)
+    path = QPainterPath(QPointF(22, 67))
+    for x, y in [(43, 67), (54, 34), (73, 93), (85, 57), (106, 57)]:
         path.lineTo(x, y)
-    p.setPen(QPen(QColor(ACCENT), 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setPen(QPen(QColor(ACCENT), 7.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
     p.drawPath(path)
     p.end()
     return QIcon(image)
+
+
+def nav_dot_icon(color_hex, overview=False):
+    """Render a crisp vector badge icon for sidebar navigation items."""
+    pix = QPixmap(28, 28)
+    pix.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    c = QColor(color_hex)
+    if overview:
+        p.setPen(Qt.PenStyle.NoPen)
+        for idx, (dx, dy) in enumerate([(6, 6), (15, 6), (6, 15), (15, 15)]):
+            cell = QColor(c)
+            cell.setAlpha(235 if idx == 0 else 155)
+            p.setBrush(cell)
+            p.drawRoundedRect(QRectF(dx, dy, 7, 7), 2.2, 2.2)
+    else:
+        halo = QColor(c)
+        halo.setAlpha(45)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(halo)
+        p.drawEllipse(QPointF(14, 14), 8.5, 8.5)
+        p.setBrush(c)
+        p.drawEllipse(QPointF(14, 14), 4.8, 4.8)
+    p.end()
+    return QIcon(pix)
 
 
 def configure_fonts():
@@ -204,19 +253,23 @@ class ScanWorker(QThread):
 
 
 class Metric(QFrame):
-    def __init__(self, title, unit, primary=False):
+    def __init__(self, title, unit, primary=False, accent=ACCENT):
         super().__init__()
+        self.primary = primary
+        self.accent = accent
         self.setObjectName('metric')
         self.setProperty('primary', primary)
         self.setMinimumWidth(155)
         box = QVBoxLayout(self)
-        box.setContentsMargins(19, 17, 19, 17)
-        box.setSpacing(5)
+        box.setContentsMargins(19, 16, 19, 16)
+        box.setSpacing(6)
 
         titleline = QHBoxLayout()
         titleline.addWidget(label(title, 'muted'))
         titleline.addStretch()
-        titleline.addWidget(label(unit, 'muted'))
+        badge = label(unit, 'unit')
+        badge.setProperty('primary', primary)
+        titleline.addWidget(badge)
         box.addLayout(titleline)
 
         self.value = label('—', 'number', ACCENT if primary else None)
@@ -232,6 +285,23 @@ class Metric(QFrame):
         self.detail.setText(detail)
         self.setToolTip(exact or detail)
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        top = QRectF(16, 1, self.width() - 32, 2.2)
+        grad = QLinearGradient(top.topLeft(), top.topRight())
+        c = QColor(self.accent)
+        c.setAlpha(185 if self.primary else 75)
+        fade = QColor(self.accent)
+        fade.setAlpha(0)
+        grad.setColorAt(0, c)
+        grad.setColorAt(0.65, c if self.primary else fade)
+        grad.setColorAt(1, fade)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(grad)
+        p.drawRoundedRect(top, 1, 1)
+
 
 class SpeedChart(QWidget):
     LIMIT = 40
@@ -240,71 +310,120 @@ class SpeedChart(QWidget):
         super().__init__()
         self.rows = []
         self.hover = -1
+        self.color = ACCENT
         self.setMouseTracking(True)
-        self.setMinimumHeight(175)
+        self.setMinimumHeight(180)
 
-    def set_rows(self, rows):
+    def set_rows(self, rows, color=ACCENT):
         self.rows = [r for r in rows if r.speed is not None][-self.LIMIT:]
+        self.color = color
         self.hover = -1
         self.update()
 
     def plot_rect(self):
-        return QRectF(40, 14, max(1, self.width() - 58), max(1, self.height() - 45))
+        return QRectF(42, 14, max(1, self.width() - 58), max(1, self.height() - 45))
 
     def point(self, i, maximum):
         rect = self.plot_rect()
-        x = rect.left() + rect.width() * i / max(1, len(self.rows) - 1)
+        if len(self.rows) == 1:
+            x = rect.center().x()
+        else:
+            x = rect.left() + rect.width() * i / (len(self.rows) - 1)
         y = rect.bottom() - rect.height() * self.rows[i].speed / maximum
         return QPointF(x, y)
 
     def paintEvent(self, event):
         p = painter(self, 'Segoe UI', 11)
         rect = self.plot_rect()
-        maximum = max([r.speed for r in self.rows] + [1]) * 1.18
+        raw_max = max((r.speed for r in self.rows), default=0)
+        maximum = max(raw_max * 1.18, 60.0 if not self.rows else 10.0)
+        accent = QColor(self.color)
 
         # Grid and axis labels.
         for i in range(4):
             y = rect.top() + rect.height() * i / 3
-            p.setPen(QPen(QColor('#303641'), 1, Qt.PenStyle.DashLine))
+            p.setPen(QPen(QColor('#262d3a'), 1, Qt.PenStyle.DashLine))
             p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
-            p.setPen(QColor('#9aa4b5'))
-            p.drawText(QRectF(0, y - 9, 30, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                       f'{maximum * (1 - i / 3):.0f}')
+            p.setPen(QColor('#7f8a9e'))
+            tick = f'{maximum * (1 - i / 3):.0f}' if self.rows else ('—' if i < 3 else '0')
+            p.drawText(QRectF(0, y - 9, 34, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tick)
+        p.setPen(QColor('#7f8a9e'))
         p.drawText(QRectF(rect.left(), rect.bottom() + 10, 100, 20), '较早')
         p.drawText(QRectF(rect.right() - 70, rect.bottom() + 10, 70, 20), Qt.AlignmentFlag.AlignRight, '最近')
 
         if not self.rows:
+            badge = QRectF(rect.center().x() - 135, rect.center().y() - 18, 270, 36)
+            p.setPen(QPen(QColor('#293140'), 1))
+            p.setBrush(QColor('#131720'))
+            p.drawRoundedRect(badge, 10, 10)
+            f = QFont('Microsoft YaHei UI')
+            f.setPixelSize(12)
+            p.setFont(f)
             p.setPen(QColor(MUTED))
-            p.drawText(rect, Qt.AlignmentFlag.AlignCenter, '此时间范围暂无可计算速度的请求')
+            p.drawText(badge, Qt.AlignmentFlag.AlignCenter, '此时间范围暂无可计算速度的请求')
             return
 
-        # Smooth curve with a gradient fill underneath.
+        # Weighted average reference line when multiple points exist.
         points = [self.point(i, maximum) for i in range(len(self.rows))]
-        path = QPainterPath(points[0])
-        for a, b in zip(points, points[1:]):
-            mid = (a.x() + b.x()) / 2
-            path.cubicTo(QPointF(mid, a.y()), QPointF(mid, b.y()), b)
+        if len(self.rows) >= 2:
+            avg = sum(r.output for r in self.rows) / sum(r.seconds for r in self.rows)
+            avg_y = rect.bottom() - rect.height() * min(avg, maximum) / maximum
+            avg_pen = QPen(accent, 1, Qt.PenStyle.DotLine)
+            c_line = QColor(accent)
+            c_line.setAlpha(95)
+            avg_pen.setColor(c_line)
+            p.setPen(avg_pen)
+            p.drawLine(QPointF(rect.left(), avg_y), QPointF(rect.right(), avg_y))
+
+        # Smooth curve with a gradient fill underneath.
+        if len(points) == 1:
+            path = QPainterPath(QPointF(rect.left(), points[0].y()))
+            path.lineTo(QPointF(rect.right(), points[0].y()))
+            fill_left, fill_right = rect.left(), rect.right()
+        else:
+            path = QPainterPath(points[0])
+            for a, b in zip(points, points[1:]):
+                mid = (a.x() + b.x()) / 2
+                path.cubicTo(QPointF(mid, a.y()), QPointF(mid, b.y()), b)
+            fill_left, fill_right = points[0].x(), points[-1].x()
+
         fill = QPainterPath(path)
-        fill.lineTo(points[-1].x(), rect.bottom())
-        fill.lineTo(points[0].x(), rect.bottom())
+        fill.lineTo(fill_right, rect.bottom())
+        fill.lineTo(fill_left, rect.bottom())
         fill.closeSubpath()
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        gradient.setColorAt(0, QColor(194, 242, 135, 65))
-        gradient.setColorAt(1, QColor(194, 242, 135, 0))
+        top_fill = QColor(accent)
+        top_fill.setAlpha(72)
+        bot_fill = QColor(accent)
+        bot_fill.setAlpha(0)
+        gradient.setColorAt(0, top_fill)
+        gradient.setColorAt(1, bot_fill)
         p.fillPath(fill, gradient)
-        p.setPen(QPen(QColor(ACCENT), 2.2))
+        p.setPen(QPen(accent, 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawPath(path)
-        p.setBrush(QColor(ACCENT))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(points[-1], 3.5, 3.5)
 
-        if self.hover >= 0:
+        # Halo + endpoint dot.
+        last_pt = points[-1]
+        halo = QRadialGradient(last_pt, 11)
+        glow = QColor(accent)
+        glow.setAlpha(95)
+        halo.setColorAt(0, glow)
+        halo.setColorAt(1, bot_fill)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(halo)
+        p.drawEllipse(last_pt, 11, 11)
+        p.setBrush(accent)
+        p.drawEllipse(last_pt, 4.0, 4.0)
+
+        if 0 <= self.hover < len(points):
             pt = points[self.hover]
-            p.setPen(QPen(QColor('#7b8771'), 1, Qt.PenStyle.DashLine))
+            guide = QColor(accent)
+            guide.setAlpha(130)
+            p.setPen(QPen(guide, 1, Qt.PenStyle.DashLine))
             p.drawLine(QPointF(pt.x(), rect.top()), QPointF(pt.x(), rect.bottom()))
-            p.setBrush(QColor(ACCENT))
-            p.setPen(QPen(QColor(PANEL), 2))
-            p.drawEllipse(pt, 5, 5)
+            p.setBrush(accent)
+            p.setPen(QPen(QColor(PANEL), 2.2))
+            p.drawEllipse(pt, 5.5, 5.5)
 
     def mouseMoveEvent(self, event):
         if not self.rows:
@@ -313,9 +432,12 @@ class SpeedChart(QWidget):
         i = round((event.position().x() - rect.left()) / rect.width() * max(1, len(self.rows) - 1))
         self.hover = max(0, min(len(self.rows) - 1, i))
         r = self.rows[self.hover]
-        QToolTip.showText(event.globalPosition().toPoint(),
-                          f'{DISPLAY[r.app]}  ·  {datetime.fromtimestamp(r.timestamp):%m-%d %H:%M:%S}\n≈ {r.speed:.1f} tokens/s',
-                          self)
+        model = f'  ·  {r.model}' if r.model else ''
+        QToolTip.showText(
+            event.globalPosition().toPoint(),
+            f'{DISPLAY[r.app]}{model}\n{datetime.fromtimestamp(r.timestamp):%m-%d %H:%M:%S}  ·  ≈ {r.speed:.1f} tokens/s',
+            self,
+        )
         self.update()
 
     def leaveEvent(self, event):
@@ -328,31 +450,67 @@ class Breakdown(QWidget):
     def __init__(self):
         super().__init__()
         self.totals = {a: 0 for a in APPS}
-        self.setMinimumWidth(200)
-        self.setMinimumHeight(175)
+        self.items = [(DISPLAY[a], 0, COLORS[a]) for a in APPS]
+        self.setMinimumWidth(215)
+        self.setMinimumHeight(180)
 
-    def set_rows(self, rows):
+    def set_rows(self, rows, selected=ALL):
         self.totals = {a: sum(r.output for r in rows if r.app == a) for a in APPS}
+        if selected != ALL and rows:
+            by_model = {}
+            for r in rows:
+                name = r.model or '未记录'
+                by_model[name] = by_model.get(name, 0) + r.output
+            ranked = sorted(by_model.items(), key=lambda kv: kv[1], reverse=True)[:len(APPS)]
+            self.items = [
+                (name, val, MODEL_PALETTE[i % len(MODEL_PALETTE)])
+                for i, (name, val) in enumerate(ranked)
+            ]
+        else:
+            self.items = [(DISPLAY[a], self.totals[a], COLORS[a]) for a in APPS]
         self.update()
 
     def paintEvent(self, event):
         p = painter(self, 'Microsoft YaHei UI', 12)
-        highest = max(max(self.totals.values()), 1)
-        line = self.height() / len(APPS)
+        values = [val for _, val, _ in self.items]
+        highest = max(values + [1])
+        grand = sum(values)
+        slots = max(len(APPS), len(self.items))
+        line = self.height() / slots
         width = self.width()
-        for i, app in enumerate(APPS):
+
+        for i, (name, total, color_hex) in enumerate(self.items):
             y = i * line
-            total = self.totals[app]
-            p.setPen(QColor(TEXT))
-            p.drawText(QRectF(0, y, width - 65, 20), DISPLAY[app])
-            p.setPen(QColor(MUTED))
-            p.drawText(QRectF(width - 80, y, 80, 20), Qt.AlignmentFlag.AlignRight, compact(total))
+            color = QColor(color_hex)
+
+            # Colored indicator dot + name.
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor('#2b3039'))
-            p.drawRoundedRect(QRectF(0, y + 24, width, 4), 2, 2)
+            p.setBrush(color if total else QColor('#3d4554'))
+            p.drawEllipse(QPointF(5, y + 10), 3.8, 3.8)
+
+            p.setPen(QColor(TEXT if total else MUTED))
+            elided = p.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, int(max(40, width - 98)))
+            p.drawText(QRectF(15, y, width - 94, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+
+            share = f'{total * 100 / grand:.0f}% · {compact(total)}' if grand and total else compact(total)
+            p.setPen(QColor(MUTED))
+            p.drawText(QRectF(width - 96, y, 96, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, share)
+
+            # Progress bar track + fill.
+            track = QRectF(0, y + 23, width, 5)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor('#232833'))
+            p.drawRoundedRect(track, 2.5, 2.5)
             if total:
-                p.setBrush(QColor(COLORS[app]))
-                p.drawRoundedRect(QRectF(0, y + 24, max(4, width * total / highest), 4), 2, 2)
+                bar_w = max(6.0, width * total / highest)
+                grad = QLinearGradient(0, 0, bar_w, 0)
+                bright = QColor(color)
+                soft = QColor(color)
+                soft.setAlpha(185)
+                grad.setColorAt(0, soft)
+                grad.setColorAt(1, bright)
+                p.setBrush(grad)
+                p.drawRoundedRect(QRectF(0, y + 23, bar_w, 5), 2.5, 2.5)
 
 
 # --------------------------------------------------------------------------- main window
@@ -417,32 +575,34 @@ class Pulse(QMainWindow):
     def build_sidebar(self):
         sidebar = QFrame()
         sidebar.setObjectName('sidebar')
-        sidebar.setFixedWidth(190)
+        sidebar.setFixedWidth(196)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(16, 27, 16, 21)
-        side.setSpacing(7)
+        side.setContentsMargins(16, 26, 16, 20)
+        side.setSpacing(6)
 
         brand = QHBoxLayout()
         icon = QLabel()
-        icon.setPixmap(app_icon().pixmap(30, 30))
+        icon.setPixmap(app_icon().pixmap(32, 32))
         brand.addWidget(icon)
         logo = label('AI PULSE')
-        logo.setStyleSheet('font-family:Segoe UI;font-size:20px;font-weight:700;letter-spacing:1px;')
+        logo.setStyleSheet('font-family:"Segoe UI";font-size:19px;font-weight:700;letter-spacing:1.2px;color:#f5f7fb;')
         brand.addWidget(logo)
         brand.addStretch()
         side.addLayout(brand)
-        side.addWidget(label('AI 用量工作台', 'muted'))
-        side.addSpacing(31)
+        side.addWidget(label('AI 用量监控工作台', 'muted'))
+        side.addSpacing(26)
         side.addWidget(label('工作空间', 'eyebrow'))
-        side.addSpacing(5)
+        side.addSpacing(4)
 
         self.nav = {}
         group = QButtonGroup(self)
         group.setExclusive(True)
         for app in (ALL,) + APPS:
-            text = '用量总览' if app == ALL else '   ' + DISPLAY[app]
+            text = '用量总览' if app == ALL else DISPLAY[app]
             b = button(text, lambda checked=False, a=app: self.select(a), 'nav')
             b.setCheckable(True)
+            b.setIcon(nav_dot_icon(ACCENT if app == ALL else COLORS[app], overview=(app == ALL)))
+            b.setIconSize(QSize(18, 18))
             group.addButton(b)
             side.addWidget(b)
             self.nav[app] = b
@@ -451,7 +611,7 @@ class Pulse(QMainWindow):
         self.connection = label('●  正在连接本地记录', 'muted')
         side.addWidget(self.connection)
         side.addWidget(label('本地运行  ·  只读访问', 'muted'))
-        side.addSpacing(7)
+        side.addSpacing(6)
         side.addWidget(label('v0.2.0  /  DESKTOP', 'eyebrow'))
         return sidebar
 
@@ -459,7 +619,8 @@ class Pulse(QMainWindow):
         header = QHBoxLayout()
         titles = QVBoxLayout()
         titles.setSpacing(3)
-        titles.addWidget(label('OVERVIEW', 'eyebrow'))
+        self.eyebrow = label('OVERVIEW', 'eyebrow')
+        titles.addWidget(self.eyebrow)
         self.heading = label('用量总览', 'heading')
         titles.addWidget(self.heading)
         header.addLayout(titles)
@@ -469,7 +630,7 @@ class Pulse(QMainWindow):
         segments.setObjectName('segments')
         box = QHBoxLayout(segments)
         box.setContentsMargins(4, 4, 4, 4)
-        box.setSpacing(2)
+        box.setSpacing(3)
         group = QButtonGroup(self)
         group.setExclusive(True)
         self.period_buttons = {}
@@ -497,9 +658,14 @@ class Pulse(QMainWindow):
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
         self.cards = []
-        for title, unit, primary in [('最近请求速度', 'tok/s', True), ('平均请求速度', 'tok/s', False),
-                                     ('累计输出', 'tokens', False), ('累计输入', 'tokens', False)]:
-            card = Metric(title, unit, primary)
+        specs = [
+            ('最近请求速度', 'tok/s', True, ACCENT),
+            ('平均请求速度', 'tok/s', False, '#7cc0ff'),
+            ('累计输出', 'tokens', False, '#b8a9ff'),
+            ('累计输入', 'tokens', False, '#f0a986'),
+        ]
+        for title, unit, primary, accent in specs:
+            card = Metric(title, unit, primary, accent)
             metrics.addWidget(card, 1)
             self.cards.append(card)
         return metrics
@@ -515,27 +681,33 @@ class Pulse(QMainWindow):
         title = QHBoxLayout()
         title.addWidget(label('请求速度趋势', 'section'))
         title.addStretch()
-        title.addWidget(label(f'最近 {SpeedChart.LIMIT} 次 · 估算', 'muted'))
+        title.addWidget(label(f'最近 {SpeedChart.LIMIT} 次 · 虚线为均值', 'muted'))
         box.addLayout(title)
         self.chart = SpeedChart()
         box.addWidget(self.chart, 1)
-        charts.addWidget(trend, 3)
+        charts.addWidget(trend, 12)
 
         split = panel()
         box = QVBoxLayout(split)
         box.setContentsMargins(18, 16, 18, 12)
         box.setSpacing(8)
-        box.addWidget(label('输出分布', 'section'))
+        split_head = QHBoxLayout()
+        self.breakdown_title = label('软件输出分布', 'section')
+        split_head.addWidget(self.breakdown_title)
+        split_head.addStretch()
+        self.breakdown_sub = label('按输出 Token', 'muted')
+        split_head.addWidget(self.breakdown_sub)
+        box.addLayout(split_head)
         self.breakdown = Breakdown()
         box.addWidget(self.breakdown, 1)
-        charts.addWidget(split, 1)
+        charts.addWidget(split, 5)
         return charts
 
     def build_table(self):
         recent = panel()
         box = QVBoxLayout(recent)
         box.setContentsMargins(0, 15, 0, 4)
-        box.setSpacing(12)
+        box.setSpacing(10)
         title = QHBoxLayout()
         title.setContentsMargins(18, 0, 18, 0)
         title.addWidget(label('最近请求', 'section'))
@@ -545,7 +717,13 @@ class Pulse(QMainWindow):
         box.addLayout(title)
 
         t = self.table = QTableWidget(0, 6)
-        t.setHorizontalHeaderLabels(['时间', '软件', '模型', '输出 Token', '思考 Token', '速度 /s'])
+        headers = ['时间', '软件', '模型', '输出 Token', '思考 Token', '速度 /s']
+        t.setHorizontalHeaderLabels(headers)
+        for col in range(6):
+            item = t.horizontalHeaderItem(col)
+            if item:
+                align = Qt.AlignmentFlag.AlignRight if col >= 3 else Qt.AlignmentFlag.AlignLeft
+                item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
         t.verticalHeader().hide()
         t.verticalHeader().setDefaultSectionSize(40)
         t.setShowGrid(False)
@@ -553,7 +731,7 @@ class Pulse(QMainWindow):
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setMinimumHeight(185)
-        for col, width in enumerate([140, 100, 210, 96, 92, 84]):
+        for col, width in enumerate([140, 108, 210, 96, 92, 84]):
             t.setColumnWidth(col, width)
         t.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         t.horizontalHeader().setMinimumSectionSize(70)
@@ -615,7 +793,9 @@ class Pulse(QMainWindow):
     def select(self, app):
         self.selected = app
         self.nav[app].setChecked(True)
+        self.eyebrow.setText('OVERVIEW' if app == ALL else f'WORKSPACE  ·  {app.upper()}')
         self.heading.setText('用量总览' if app == ALL else DISPLAY[app])
+        self.breakdown_title.setText('软件输出分布' if app == ALL else '模型输出分布')
         self.render()
 
     def set_period(self, text):
@@ -646,22 +826,26 @@ class Pulse(QMainWindow):
         cutoff = self.cutoff()
         self.rows = sorted((r for a in apps for r in self.data[a]['requests'] if r.timestamp >= cutoff),
                            key=lambda r: r.timestamp)
+        theme_color = ACCENT if self.selected == ALL else COLORS[self.selected]
+        self.cards[0].accent = theme_color
+        self.cards[0].value.setStyleSheet(f'color:{theme_color};')
+        self.cards[0].update()
         self.render_metrics()
         self.render_status(apps)
-        self.chart.set_rows(self.rows)
-        self.breakdown.set_rows(self.rows)
+        self.chart.set_rows(self.rows, theme_color)
+        self.breakdown.set_rows(self.rows, self.selected)
         self.render_table()
 
     def render_metrics(self):
         rows = self.rows
         timed = [r for r in rows if r.speed is not None]
-        last = rows[-1] if rows else None
+        recent_timed = timed[-1] if timed else None
         avg = sum(r.output for r in timed) / sum(r.seconds for r in timed) if timed else None
-        if last and last.speed is not None:
-            self.cards[0].update_value(f'{last.speed:.1f}', '≈ 请求耗时口径')
+        if recent_timed:
+            self.cards[0].update_value(f'{recent_timed.speed:.1f}', f'≈ 请求耗时口径 · {DISPLAY[recent_timed.app]}')
         else:
             self.cards[0].update_value('—', '缺少单次耗时记录')
-        self.cards[1].update_value(f'{avg:.1f}' if avg is not None else '—', f'{len(timed):,} 次有耗时的请求')
+        self.cards[1].update_value(f'{avg:.1f}' if avg is not None else '—', f'{len(timed):,} / {len(rows):,} 次含耗时请求')
         output = sum(r.output for r in rows)
         inp = sum(r.input for r in rows)
         self.cards[2].update_value(compact(output), '思考 ' + compact(sum(r.reasoning for r in rows)),
@@ -692,20 +876,24 @@ class Pulse(QMainWindow):
         for row, r in enumerate(reversed(self.rows[-TABLE_LIMIT:])):
             values = [
                 datetime.fromtimestamp(r.timestamp).strftime('%m-%d %H:%M:%S'),
-                DISPLAY[r.app],
+                '●  ' + DISPLAY[r.app],
                 r.model or '未记录',
                 f'{r.output:,}',
                 f'{r.reasoning:,}',
                 f'≈ {r.speed:.1f}' if r.speed is not None else '—',
             ]
+            tip = (f'{DISPLAY[r.app]}  ·  {r.model or "未记录"}\n'
+                   f'输入 {r.input:,}  ·  缓存 {r.cached:,}  ·  输出 {r.output:,}  ·  思考 {r.reasoning:,}')
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setToolTip(value)
+                item.setToolTip(tip)
                 if col >= 3:
                     item.setTextAlignment(right)
                 if col == 1:
                     item.setForeground(QColor(COLORS[r.app]))
-                if col in (0, 4):
+                elif col == 5 and r.speed is not None:
+                    item.setForeground(QColor(ACCENT))
+                elif col in (0, 4):
                     item.setForeground(QColor(MUTED))
                 t.setItem(row, col, item)
         if 0 <= selected < t.rowCount():
