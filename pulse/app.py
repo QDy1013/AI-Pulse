@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import ctypes
 import json
+import math
 import os
 import sys
 import time
@@ -19,24 +20,32 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton, QLineEdit,
     QVBoxLayout, QHBoxLayout, QScrollArea, QButtonGroup, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QFileDialog, QMessageBox,
-    QDialog, QTabWidget, QTextEdit, QComboBox, QDialogButtonBox, QToolTip, QSizePolicy,
+    QDialog, QTabWidget, QTextEdit, QComboBox, QDialogButtonBox, QToolTip, QSizePolicy, QCheckBox,
+    QSystemTrayIcon, QMenu,
 )
 
+from . import autostart, insights
 from .collector import APPS, Collector, defaults
 from .pricing import (
     DEFAULT_USD_TO_CNY, estimate_usd, format_cny, format_custom_rates, format_usd, parse_custom_rates,
 )
+from .remote import RemoteService, find_cloudflared, new_token
 
-BG, PANEL, BORDER, TEXT, MUTED, ACCENT, GOLD = (
-    '#121212', '#1b1b1b', '#2a2a2a', '#f2f2f2', '#9a9a9a', '#c2f287', '#f5c469',
-)
+# Graphite surfaces, a single emerald accent and amber reserved for money.
+BG, SIDEBAR, PANEL, RAISED = '#0b0c0e', '#0e0f12', '#141619', '#191c20'
+BORDER, LINE, GRID, TRACK = '#23262b', '#2f333a', '#1d2025', '#202328'
+TEXT, SECONDARY, MUTED = '#eceef1', '#a6abb4', '#767c86'
+ACCENT, GOLD, WARN, DANGER = '#6fdcaa', '#e7bd6c', '#f2b443', '#ee6b6b'
+# App hues are a validated categorical set (adjacent-pair CVD ΔE ≥ 8 on the panel
+# surface) in this fixed order; models and projects reuse the same order, never cycled.
 COLORS = {
-    'Codex': '#c2f287',
-    'Claude': '#f0a986',
-    'Reasonix': '#b8a9ff',
-    'Antigravity': '#7cc0ff',
-    'WorkBuddy': '#6ee2c9',
+    'Codex': '#199e70',
+    'Claude': '#d95926',
+    'Reasonix': '#9085e9',
+    'Antigravity': '#d55181',
+    'WorkBuddy': '#3987e5',
 }
+OTHER = '#5d636d'
 DISPLAY = {
     'Codex': 'Codex',
     'Claude': 'Claude Code',
@@ -44,7 +53,11 @@ DISPLAY = {
     'Antigravity': '反重力',
     'WorkBuddy': 'WorkBuddy',
 }
-MODEL_PALETTE = ('#c2f287', '#f5c469', '#f0a986', '#6ee2c9', '#b8a9ff')
+MODEL_PALETTE = tuple(COLORS.values())
+
+
+def series_color(i):
+    return MODEL_PALETTE[i] if i < len(MODEL_PALETTE) else OTHER
 
 ALL = '全部软件'
 PERIODS = ('今天', '近 7 天', '全部记录')
@@ -54,47 +67,54 @@ STYLE = f'''
 QWidget {{ color: {TEXT}; font-family: "Microsoft YaHei UI"; font-size: 13px; }}
 QMainWindow, QDialog, QWidget#root, QWidget#content, QWidget#viewport {{ background: {BG}; }}
 QLabel {{ background: transparent; border: none; }}
-QFrame#sidebar {{ background: #161616; border-right: 1px solid #242424; }}
-QFrame#panel, QFrame#metric {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 14px; }}
-QFrame#metric[primary="true"] {{ background: #1b2218; border: 1px solid #394b2f; }}
-QFrame#metric[quota="true"] {{ background: #1f1c16; border: 1px solid #443922; }}
+QFrame#sidebar {{ background: {SIDEBAR}; border-right: 1px solid {BORDER}; }}
+QFrame#panel, QFrame#metric {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {RAISED}, stop:1 {PANEL}); border: 1px solid {BORDER}; border-radius: 12px; }}
+QFrame#metric[primary="true"] {{ border-color: #24392f; }}
+QFrame#metric[quota="true"] {{ border-color: #3a3122; }}
 QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
-QLabel#eyebrow {{ color: #828282; font-size: 11px; font-weight: 700; letter-spacing: 2px; }}
-QLabel#heading {{ font-size: 26px; font-weight: 700; color: #f7f7f7; }}
-QLabel#section {{ font-size: 14px; font-weight: 600; color: #efefef; }}
-QLabel#unit {{ color: #989898; background: #232323; border: 1px solid #323232; border-radius: 8px; padding: 1px 7px; font-family: "Segoe UI"; font-size: 11px; font-weight: 600; }}
-QLabel#unit[primary="true"] {{ color: {ACCENT}; background: #232f1e; border-color: #394d2f; }}
-QLabel#unit[quota="true"] {{ color: {GOLD}; background: #2d2618; border-color: #4b3e24; }}
-QLabel#number {{ font-family: "Segoe UI"; font-size: 30px; font-weight: 700; letter-spacing: -1px; }}
-QLabel#pill {{ color: {ACCENT}; background: #222e1e; border: 1px solid #36492e; border-radius: 10px; padding: 3px 10px; font-size: 11px; font-weight: 600; }}
-QPushButton {{ background: #202020; border: 1px solid #323232; border-radius: 8px; padding: 7px 14px; font-weight: 500; color: #e2e2e2; }}
-QPushButton:hover {{ background: #2a2a2a; border-color: #484848; color: white; }}
-QPushButton:pressed {{ background: #333333; }}
-QPushButton:disabled {{ color: #6e6e6e; }}
-QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 10px 12px; color: #b8b8b8; font-weight: 500; }}
-QPushButton#nav:hover {{ background: #202020; color: #f2f2f2; }}
-QPushButton#nav:checked {{ background: #212a1d; border-color: #37482e; color: {ACCENT}; font-weight: 600; }}
-QPushButton#period {{ background: transparent; border: none; border-radius: 7px; color: #a0a0a0; padding: 6px 14px; font-weight: 500; }}
-QPushButton#period:hover {{ color: #ececec; }}
-QPushButton#period:checked {{ background: #2e2e2e; color: white; font-weight: 600; }}
-QFrame#segments {{ background: #191919; border: 1px solid #2b2b2b; border-radius: 10px; }}
-QTableWidget {{ background: transparent; alternate-background-color: #1f1f1f; border: none; gridline-color: #282828; selection-background-color: #253121; selection-color: white; outline: none; }}
-QHeaderView::section {{ background: #1e1e1e; color: #a0a0a0; border: none; border-bottom: 1px solid #2c2c2c; padding: 10px 12px; font-size: 12px; font-weight: 600; }}
-QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid #242424; }}
+QLabel#eyebrow {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 2.4px; }}
+QLabel#heading {{ font-size: 26px; font-weight: 700; color: {TEXT}; letter-spacing: 0.5px; }}
+QLabel#section {{ font-size: 14px; font-weight: 600; color: {TEXT}; }}
+QLabel#unit {{ color: {MUTED}; background: transparent; border: 1px solid {LINE}; border-radius: 6px; padding: 1px 6px; font-family: "Segoe UI"; font-size: 10px; font-weight: 600; letter-spacing: 0.4px; }}
+QLabel#unit[primary="true"] {{ color: {ACCENT}; border-color: #24453a; }}
+QLabel#unit[quota="true"] {{ color: {GOLD}; border-color: #4a3c22; }}
+QLabel#number {{ font-family: "Segoe UI"; font-size: 30px; font-weight: 600; letter-spacing: -0.5px; color: {TEXT}; }}
+QPushButton {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 7px 15px; font-weight: 500; color: {SECONDARY}; }}
+QPushButton:hover {{ background: {RAISED}; border-color: {LINE}; color: {TEXT}; }}
+QPushButton:pressed {{ background: #20242a; }}
+QPushButton:disabled {{ color: #4f545c; }}
+QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 9px; padding: 9px 12px; color: {SECONDARY}; font-weight: 500; }}
+QPushButton#nav:hover {{ background: #141619; color: {TEXT}; }}
+QPushButton#nav:checked {{ background: #171a1e; border-color: {BORDER}; color: {TEXT}; font-weight: 600; }}
+QPushButton#period {{ background: transparent; border: none; border-radius: 7px; color: {MUTED}; padding: 6px 14px; font-weight: 500; }}
+QPushButton#period:hover {{ color: {TEXT}; }}
+QPushButton#period:checked {{ background: #22262c; color: {TEXT}; font-weight: 600; }}
+QFrame#segments {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 10px; }}
+QTableWidget {{ background: transparent; alternate-background-color: #16181c; border: none; gridline-color: {GRID}; selection-background-color: #1a2a23; selection-color: {TEXT}; outline: none; }}
+QHeaderView {{ background: {PANEL}; border: none; }}
+QHeaderView::section {{ background: {PANEL}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER}; padding: 10px 12px; font-size: 12px; font-weight: 600; }}
+QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid {GRID}; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 0; }}
-QScrollBar::handle:vertical {{ background: #3d3d3d; border-radius: 4px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: #525252; }}
+QScrollBar::handle:vertical {{ background: #2a2e34; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: #3a3f46; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QScrollBar:horizontal {{ height: 8px; background: transparent; }}
-QScrollBar::handle:horizontal {{ background: #3d3d3d; border-radius: 4px; min-width: 30px; }}
-QTextEdit, QLineEdit {{ background: #141414; color: {TEXT}; border: 1px solid #343434; border-radius: 8px; padding: 8px; selection-background-color: #3c4f31; }}
-QComboBox {{ background: #222222; border: 1px solid #383838; border-radius: 8px; padding: 8px; }}
-QTabWidget::pane {{ border: 1px solid #2e2e2e; border-radius: 10px; padding: 10px; background: #181818; }}
-QTabBar::tab {{ background: #202020; padding: 9px 14px; color: #a0a0a0; border-top-left-radius: 7px; border-top-right-radius: 7px; margin-right: 3px; }}
-QTabBar::tab:selected {{ color: {ACCENT}; background: #253020; font-weight: 600; }}
-QToolTip {{ color: {TEXT}; background: #242424; border: 1px solid #444444; border-radius: 6px; padding: 8px; }}
+QScrollBar::handle:horizontal {{ background: #2a2e34; border-radius: 4px; min-width: 30px; }}
+QTextEdit, QLineEdit {{ background: {BG}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px; selection-background-color: #1f4436; }}
+QTextEdit:focus, QLineEdit:focus {{ border-color: #2f5a48; }}
+QComboBox {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px; }}
+QCheckBox {{ spacing: 9px; }}
+QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: 10px; padding: 10px; background: {PANEL}; }}
+QTabBar::tab {{ background: transparent; padding: 9px 14px; color: {MUTED}; border-bottom: 2px solid transparent; margin-right: 4px; }}
+QTabBar::tab:hover {{ color: {TEXT}; }}
+QTabBar::tab:selected {{ color: {TEXT}; border-bottom-color: {ACCENT}; font-weight: 600; }}
+QToolTip {{ color: {TEXT}; background: #1b1e23; border: 1px solid {LINE}; border-radius: 6px; padding: 8px; }}
+QMenu {{ background: #16191d; border: 1px solid {LINE}; border-radius: 8px; padding: 4px; }}
+QMenu::item {{ padding: 7px 22px; border-radius: 6px; }}
+QMenu::item:selected {{ background: #20242a; color: {TEXT}; }}
+QMenu::separator {{ height: 1px; background: {BORDER}; margin: 4px 8px; }}
 '''
 
 
@@ -113,9 +133,9 @@ def apply_dark_frame(window):
         dwm = ctypes.windll.dwmapi
         for attr, val in (
             (20, ctypes.c_int(1)),              # DWMWA_USE_IMMERSIVE_DARK_MODE
-            (34, ctypes.c_uint32(0x002A2A2A)),  # DWMWA_BORDER_COLOR (#2a2a2a)
-            (35, ctypes.c_uint32(0x00161616)),  # DWMWA_CAPTION_COLOR (#161616)
-            (36, ctypes.c_uint32(0x00EDEDED)),  # DWMWA_TEXT_COLOR (#ededed)
+            (34, ctypes.c_uint32(0x002B2623)),  # DWMWA_BORDER_COLOR (#23262b, COLORREF is BGR)
+            (35, ctypes.c_uint32(0x00120F0E)),  # DWMWA_CAPTION_COLOR (#0e0f12)
+            (36, ctypes.c_uint32(0x00F1EEEC)),  # DWMWA_TEXT_COLOR (#eceef1)
         ):
             dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), attr, ctypes.byref(val), ctypes.sizeof(val))
     except Exception:
@@ -199,6 +219,26 @@ def load_config():
                     except (TypeError, ValueError):
                         pass
             c['model_rates'] = valid_rates
+        remote = saved.get('remote', {})
+        if isinstance(remote, dict):
+            r = c['remote']
+            for k in ('enabled', 'tunnel', 'lan'):
+                if isinstance(remote.get(k), bool):
+                    r[k] = remote[k]
+            port = remote.get('port')
+            if isinstance(port, int) and not isinstance(port, bool) and 0 <= port < 65536:
+                r['port'] = port
+            for k in ('token', 'cloudflared', 'tunnel_token', 'public_url'):
+                if isinstance(remote.get(k), str):
+                    r[k] = remote[k].strip()
+        if isinstance(saved.get('tray'), bool):
+            c['tray'] = saved['tray']
+        budget = saved.get('budget', {})
+        if isinstance(budget, dict):
+            for k in ('daily_cny', 'monthly_cny'):
+                v = budget.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 1e9:
+                    c['budget'][k] = float(v)
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     return c
@@ -228,10 +268,10 @@ def app_icon():
     p = QPainter(image)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     grad = QLinearGradient(0, 0, 128, 128)
-    grad.setColorAt(0, QColor('#263520'))
-    grad.setColorAt(1, QColor('#172015'))
+    grad.setColorAt(0, QColor('#17342a'))
+    grad.setColorAt(1, QColor('#0d1a15'))
     p.setBrush(grad)
-    p.setPen(QPen(QColor('#3e5633'), 3))
+    p.setPen(QPen(QColor('#2a5242'), 3))
     p.drawRoundedRect(QRectF(6, 6, 116, 116), 28, 28)
     path = QPainterPath(QPointF(22, 67))
     for x, y in [(43, 67), (54, 34), (73, 93), (85, 57), (106, 57)]:
@@ -275,6 +315,42 @@ def configure_fonts():
     for file in ['msyh.ttc', 'msyhbd.ttc', 'segoeui.ttf', 'segoeuib.ttf']:
         if (directory / file).exists():
             QFontDatabase.addApplicationFont(str(directory / file))
+
+
+def qr_pixmap(text, size):
+    """Render a QR code for the phone link; empty pixmap if segno is unavailable."""
+    pix = QPixmap(size, size)
+    pix.fill(QColor('#ffffff'))
+    try:
+        import segno
+        rows = list(segno.make_qr(text, error='m').matrix_iter(scale=1, border=2))
+    except Exception:
+        return QPixmap()
+    cell = size / len(rows)
+    p = QPainter(pix)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor('#000000'))
+    for y, row in enumerate(rows):
+        for x, dark in enumerate(row):
+            if dark:
+                p.drawRect(QRectF(x * cell, y * cell, cell + 0.5, cell + 0.5))
+    p.end()
+    return pix
+
+
+class RemoteSignal(QObject):
+    # Tunnel threads report URL changes; the signal moves them onto the UI thread.
+    changed = Signal()
+
+
+def nice_max(value, intervals=3):
+    """Round an axis maximum up so each of `intervals` ticks lands on a round number."""
+    step = value / intervals
+    magnitude = 10 ** math.floor(math.log10(step)) if step > 0 else 1
+    for m in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        if m * magnitude >= step:
+            return m * magnitude * intervals
+    return step * intervals
 
 
 def painter(widget, family, size):
@@ -328,8 +404,8 @@ class Metric(QFrame):
         titleline.addWidget(badge)
         box.addLayout(titleline)
 
-        val_color = ACCENT if primary else (GOLD if quota else None)
-        self.value = label('—', 'number', val_color)
+        # Figures stay in text ink; only money wears amber. The accent lives in the top rule.
+        self.value = label('—', 'number', GOLD if quota else None)
         self.value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         box.addWidget(self.value)
 
@@ -346,15 +422,15 @@ class Metric(QFrame):
         super().paintEvent(event)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        top = QRectF(16, 1, self.width() - 32, 2.2)
+        top = QRectF(16, 1, self.width() - 32, 1.6)
         grad = QLinearGradient(top.topLeft(), top.topRight())
         emph = self.primary or self.quota
         c = QColor(self.accent)
-        c.setAlpha(185 if emph else 75)
+        c.setAlpha(200 if emph else 60)
         fade = QColor(self.accent)
         fade.setAlpha(0)
-        grad.setColorAt(0, c)
-        grad.setColorAt(0.65, c if emph else fade)
+        grad.setColorAt(0, fade)
+        grad.setColorAt(0.5, c)
         grad.setColorAt(1, fade)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
@@ -394,25 +470,25 @@ class SpeedChart(QWidget):
         p = painter(self, 'Segoe UI', 11)
         rect = self.plot_rect()
         raw_max = max((r.speed for r in self.rows), default=0)
-        maximum = max(raw_max * 1.18, 60.0 if not self.rows else 10.0)
+        maximum = nice_max(raw_max * 1.08) if raw_max > 0 else 60.0
         accent = QColor(self.color)
 
         # Grid and axis labels.
         for i in range(4):
             y = rect.top() + rect.height() * i / 3
-            p.setPen(QPen(QColor('#2a2a2a'), 1, Qt.PenStyle.DashLine))
+            p.setPen(QPen(QColor(GRID if i < 3 else LINE), 1))
             p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
-            p.setPen(QColor('#888888'))
+            p.setPen(QColor(MUTED))
             tick = f'{maximum * (1 - i / 3):.0f}' if self.rows else ('—' if i < 3 else '0')
             p.drawText(QRectF(0, y - 9, 34, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tick)
-        p.setPen(QColor('#888888'))
+        p.setPen(QColor(MUTED))
         p.drawText(QRectF(rect.left(), rect.bottom() + 10, 100, 20), '较早')
         p.drawText(QRectF(rect.right() - 70, rect.bottom() + 10, 70, 20), Qt.AlignmentFlag.AlignRight, '最近')
 
         if not self.rows:
             badge = QRectF(rect.center().x() - 135, rect.center().y() - 18, 270, 36)
-            p.setPen(QPen(QColor('#2e2e2e'), 1))
-            p.setBrush(QColor('#161616'))
+            p.setPen(QPen(QColor(BORDER), 1))
+            p.setBrush(QColor(BG))
             p.drawRoundedRect(badge, 10, 10)
             f = QFont('Microsoft YaHei UI')
             f.setPixelSize(12)
@@ -451,13 +527,13 @@ class SpeedChart(QWidget):
         fill.closeSubpath()
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         top_fill = QColor(accent)
-        top_fill.setAlpha(72)
+        top_fill.setAlpha(46)
         bot_fill = QColor(accent)
         bot_fill.setAlpha(0)
         gradient.setColorAt(0, top_fill)
         gradient.setColorAt(1, bot_fill)
         p.fillPath(fill, gradient)
-        p.setPen(QPen(accent, 2.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.setPen(QPen(accent, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawPath(path)
 
         # Halo + endpoint dot.
@@ -509,6 +585,7 @@ class Breakdown(QWidget):
         super().__init__()
         self.totals = {a: 0 for a in APPS}
         self.items = [(DISPLAY[a], 0, 0.0, COLORS[a]) for a in APPS]
+        self.tips = []
         self.usd_to_cny = DEFAULT_USD_TO_CNY
         self.setMouseTracking(True)
         self.setMinimumWidth(215)
@@ -516,6 +593,7 @@ class Breakdown(QWidget):
 
     def set_rows(self, rows, selected=ALL, custom_rates=None, usd_to_cny=DEFAULT_USD_TO_CNY):
         self.usd_to_cny = usd_to_cny
+        self.tips = []
         self.totals = {a: sum(r.output for r in rows if r.app == a) for a in APPS}
         if selected != ALL and rows:
             by_model = {}
@@ -527,7 +605,7 @@ class Breakdown(QWidget):
                 cost_by_model[name] = cost_by_model.get(name, 0.0) + usd
             ranked = sorted(by_model.items(), key=lambda kv: (kv[1], cost_by_model[kv[0]]), reverse=True)[:len(APPS)]
             self.items = [
-                (name, val, cost_by_model[name], MODEL_PALETTE[i % len(MODEL_PALETTE)])
+                (name, val, cost_by_model[name], series_color(i))
                 for i, (name, val) in enumerate(ranked)
             ]
         else:
@@ -550,8 +628,8 @@ class Breakdown(QWidget):
 
             # Colored indicator dot + name.
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(color if active else QColor('#404040'))
-            p.drawEllipse(QPointF(5, y + 10), 3.8, 3.8)
+            p.setBrush(color if active else QColor('#3a3f46'))
+            p.drawEllipse(QPointF(5, y + 10), 3.5, 3.5)
 
             right_text = f'{format_usd(usd)} · {compact(total)}' if active else '0'
             rw = p.fontMetrics().horizontalAdvance(right_text)
@@ -561,24 +639,17 @@ class Breakdown(QWidget):
             elided = p.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, avail)
             p.drawText(QRectF(15, y, avail + 2, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
 
-            p.setPen(QColor(MUTED))
+            p.setPen(QColor(SECONDARY if active else MUTED))
             p.drawText(QRectF(width - rw - 2, y, rw + 2, 20), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, right_text)
 
             # Progress bar track + fill.
-            track = QRectF(0, y + 23, width, 5)
+            track = QRectF(0, y + 24, width, 4)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor('#262626'))
-            p.drawRoundedRect(track, 2.5, 2.5)
+            p.setBrush(QColor(TRACK))
+            p.drawRoundedRect(track, 2, 2)
             if total:
-                bar_w = max(6.0, width * total / highest)
-                grad = QLinearGradient(0, 0, bar_w, 0)
-                bright = QColor(color)
-                soft = QColor(color)
-                soft.setAlpha(185)
-                grad.setColorAt(0, soft)
-                grad.setColorAt(1, bright)
-                p.setBrush(grad)
-                p.drawRoundedRect(QRectF(0, y + 23, bar_w, 5), 2.5, 2.5)
+                p.setBrush(color)
+                p.drawRoundedRect(QRectF(0, y + 24, max(4.0, width * total / highest), 4), 2, 2)
 
     def mouseMoveEvent(self, event):
         if not self.items:
@@ -593,14 +664,173 @@ class Breakdown(QWidget):
         grand = sum(v for _, v, _, _ in self.items)
         pct = f'（{total * 100 / grand:.1f}%）' if grand and total else ''
         cny = usd * self.usd_to_cny
+        tip = self.tips[idx] + '\n' if idx < len(self.tips) and self.tips[idx] else ''
         QToolTip.showText(
             event.globalPosition().toPoint(),
-            f'{name}\n输出 {total:,} tokens{pct}\n折算额度 {format_usd(usd)}（约 {format_cny(cny)}）',
+            f'{name}\n{tip}输出 {total:,} tokens{pct}\n折算额度 {format_usd(usd)}（约 {format_cny(cny)}）',
             self,
         )
 
+    def set_items(self, items, tips=(), usd_to_cny=DEFAULT_USD_TO_CNY):
+        """Show arbitrary (name, output, usd, color) rows, e.g. projects."""
+        self.items, self.tips, self.usd_to_cny = list(items), list(tips), usd_to_cny
+        self.update()
+
     def leaveEvent(self, event):
         QToolTip.hideText()
+
+
+def level_color(pct, normal=ACCENT):
+    return DANGER if pct >= 100 else (WARN if pct >= insights.WARN_PERCENT else normal)
+
+
+class Gauge(QFrame):
+    """Compact limit card: value, usage bar and reset / limit detail."""
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName('panel')
+        self.pct, self.color = 0.0, ACCENT
+        box = QVBoxLayout(self)
+        box.setContentsMargins(15, 11, 15, 12)
+        box.setSpacing(4)
+        head = QHBoxLayout()
+        self.title = label('', 'muted')
+        head.addWidget(self.title)
+        head.addStretch()
+        self.value = label('', 'section')
+        head.addWidget(self.value)
+        box.addLayout(head)
+        box.addSpacing(16)  # Room for the painted usage bar.
+        self.detail = label('', 'muted')
+        box.addWidget(self.detail)
+
+    def set(self, title, value, detail, pct, color, tip=''):
+        self.title.setText(title)
+        self.value.setText(value)
+        # Text stays in ink unless the bar is in a warning state.
+        self.value.setStyleSheet(f'color:{color if color in (WARN, DANGER) else TEXT};')
+        self.detail.setText(detail)
+        self.setToolTip(tip or detail)
+        self.pct, self.color = pct, color
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        track = QRectF(15, self.detail.y() - 10, self.width() - 30, 4)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(TRACK))
+        p.drawRoundedRect(track, 2, 2)
+        if self.pct > 0:
+            p.setBrush(QColor(self.color))
+            p.drawRoundedRect(QRectF(track.left(), track.top(), max(4.0, track.width() * min(self.pct, 100) / 100), 4), 2, 2)
+
+
+class DailyChart(QWidget):
+    """Per-day estimated cost, stacked by app on the overview."""
+
+    def __init__(self):
+        super().__init__()
+        self.days = []
+        self.color = None
+        self.fx = DEFAULT_USD_TO_CNY
+        self.hover = -1
+        self.setMouseTracking(True)
+        self.setMinimumHeight(190)
+
+    def set_days(self, days, color=None, fx=DEFAULT_USD_TO_CNY):
+        self.days, self.color, self.fx, self.hover = days, color, fx, -1
+        self.update()
+
+    def plot_rect(self):
+        return QRectF(50, 10, max(1, self.width() - 56), max(1, self.height() - 38))
+
+    def segments(self, day):
+        if self.color:
+            return [(self.color, day['usd'])]
+        return [(COLORS[a], day['apps'].get(a, 0.0)) for a in APPS]
+
+    def paintEvent(self, event):
+        p = painter(self, 'Segoe UI', 11)
+        rect = self.plot_rect()
+        top = max((d['usd'] for d in self.days), default=0)
+        maximum = nice_max(top * 1.05) if top > 0 else 1.0
+        for i in range(4):
+            y = rect.top() + rect.height() * i / 3
+            p.setPen(QPen(QColor(GRID if i < 3 else LINE), 1))
+            p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+            p.setPen(QColor(MUTED))
+            value = maximum * (1 - i / 3)
+            tick = (f'${value:,.0f}' if value >= 10 or not value else format_usd(value)) if top > 0 else ('—' if i < 3 else '$0')
+            p.drawText(QRectF(0, y - 9, 44, 18), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tick)
+        if not self.days:
+            return
+        slot = rect.width() / len(self.days)
+        bar = max(2.0, min(slot * 0.62, 18.0))
+        p.setPen(QColor(MUTED))
+        for i in range(len(self.days) - 1, -1, -7):
+            x = rect.left() + slot * (i + 0.5)
+            p.drawText(QRectF(x - 30, rect.bottom() + 8, 60, 18), Qt.AlignmentFlag.AlignCenter, self.days[i]['date'][5:])
+        if top <= 0:
+            badge = QRectF(rect.center().x() - 120, rect.center().y() - 18, 240, 36)
+            p.setPen(QPen(QColor(BORDER), 1))
+            p.setBrush(QColor(BG))
+            p.drawRoundedRect(badge, 10, 10)
+            f = QFont('Microsoft YaHei UI')
+            f.setPixelSize(12)
+            p.setFont(f)
+            p.setPen(QColor(MUTED))
+            p.drawText(badge, Qt.AlignmentFlag.AlignCenter, f'近 {len(self.days)} 天暂无折算额度')
+            return
+        p.setPen(Qt.PenStyle.NoPen)
+        radius = min(3.0, bar / 2)
+        for i, day in enumerate(self.days):
+            x = rect.left() + slot * i + (slot - bar) / 2
+            y = rect.bottom()
+            if self.hover == i:
+                p.setBrush(QColor(255, 255, 255, 8))
+                p.drawRoundedRect(QRectF(rect.left() + slot * i, rect.top(), slot, rect.height()), 4, 4)
+            parts = [(c, v) for c, v in self.segments(day) if v > 0]
+            for n, (color, value) in enumerate(parts):
+                h = max(1.5, rect.height() * value / maximum)
+                c = QColor(color)
+                if self.hover not in (-1, i):
+                    c.setAlpha(110)
+                p.setBrush(c)
+                # Stacked segments are separated by a 1.5px surface gap; only the top end is rounded.
+                seg = QRectF(x, y - h, bar, h - (1.5 if n and h > 3 else 0))
+                if n == len(parts) - 1:
+                    path = QPainterPath()
+                    path.addRoundedRect(seg, radius, radius)
+                    path.addRect(QRectF(seg.left(), seg.bottom() - min(radius, seg.height() / 2), seg.width(), min(radius, seg.height() / 2)))
+                    p.drawPath(path.simplified())
+                else:
+                    p.drawRect(seg)
+                y -= h
+
+    def mouseMoveEvent(self, event):
+        if not self.days:
+            return
+        rect = self.plot_rect()
+        i = int((event.position().x() - rect.left()) / (rect.width() / len(self.days)))
+        if not 0 <= i < len(self.days):
+            self.leaveEvent(event)
+            return
+        self.hover = i
+        d = self.days[i]
+        lines = [f'{d["date"]}  ·  {d["count"]:,} 次请求',
+                 f'折算额度 {format_usd(d["usd"])}（约 {format_cny(d["usd"] * self.fx)}）  ·  输出 {compact(d["output"])}']
+        if not self.color:
+            lines += [f'{DISPLAY[a]}  {format_usd(v)}' for a, v in sorted(d['apps'].items(), key=lambda kv: -kv[1]) if v > 0]
+        QToolTip.showText(event.globalPosition().toPoint(), '\n'.join(lines), self)
+        self.update()
+
+    def leaveEvent(self, event):
+        self.hover = -1
+        QToolTip.hideText()
+        self.update()
 
 
 # --------------------------------------------------------------------------- main window
@@ -622,6 +852,11 @@ class Pulse(QMainWindow):
         self.worker = None
         self.auto_period = True
         self.signature = None
+        self.tray = None
+        self.quitting = False
+        self.tray_hinted = False
+        self.notified = set()
+        self.insights_at = 0.0
 
         self.setWindowTitle('AI Pulse · AI 用量工作台')
         self.setWindowIcon(app_icon())
@@ -652,10 +887,18 @@ class Pulse(QMainWindow):
         main.setSpacing(17)
         main.addLayout(self.build_header())
         main.addLayout(self.build_toolbar())
+        main.addWidget(self.build_gauges())
         main.addLayout(self.build_metrics())
         main.addLayout(self.build_charts())
+        main.addLayout(self.build_history())
         main.addWidget(self.build_table(), 1)
         main.addLayout(self.build_footer())
+
+        self.remote_signal = RemoteSignal(self)
+        self.remote_signal.changed.connect(self.render_remote)
+        self.remote = RemoteService(self.remote_signal.changed.emit)
+        self.remote.apply(self.collector.config.get('remote', {}))
+        self.setup_tray()
 
         self.select(ALL)
         self.timer = QTimer(self)
@@ -663,7 +906,7 @@ class Pulse(QMainWindow):
         self.timer.start(self.interval_ms())
         QTimer.singleShot(100, self.refresh)
         if smoke:
-            QTimer.singleShot(120000, self.close)
+            QTimer.singleShot(120000, self.quit_app)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -684,7 +927,7 @@ class Pulse(QMainWindow):
         icon.setPixmap(app_icon().pixmap(32, 32))
         brand.addWidget(icon)
         logo = label('AI PULSE')
-        logo.setStyleSheet('font-family:"Segoe UI";font-size:19px;font-weight:700;letter-spacing:1.2px;color:#f5f5f5;')
+        logo.setStyleSheet('font-family:"Segoe UI";font-size:19px;font-weight:700;letter-spacing:1.6px;color:{TEXT};')
         brand.addWidget(logo)
         brand.addStretch()
         side.addLayout(brand)
@@ -709,6 +952,9 @@ class Pulse(QMainWindow):
         side.addStretch()
         self.connection = label('●  正在连接本地记录', 'muted')
         side.addWidget(self.connection)
+        self.remote_label = label('', 'muted')
+        self.remote_label.setWordWrap(True)
+        side.addWidget(self.remote_label)
         side.addWidget(label('本地运行  ·  只读访问', 'muted'))
         side.addSpacing(6)
         side.addWidget(label('v0.2.0  /  DESKTOP', 'eyebrow'))
@@ -749,9 +995,62 @@ class Pulse(QMainWindow):
         toolbar.addWidget(self.status, 1)
         self.pause_button = button('暂停', self.pause)
         toolbar.addWidget(self.pause_button)
-        for title, fn in [('导入', self.import_file), ('导出 CSV', self.export), ('数据源', self.settings)]:
+        for title, fn in [('手机查看', self.remote_dialog), ('导入', self.import_file),
+                          ('导出 CSV', self.export), ('设置', self.settings)]:
             toolbar.addWidget(button(title, fn))
         return toolbar
+
+    def build_gauges(self):
+        # Codex quota windows and spending budgets; hidden when neither is available.
+        self.gauge_row = QWidget()
+        row = QHBoxLayout(self.gauge_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        self.gauges = []
+        for _ in range(4):
+            g = Gauge()
+            g.hide()
+            row.addWidget(g, 1)
+            self.gauges.append(g)
+        self.gauge_row.hide()
+        return self.gauge_row
+
+    def build_history(self):
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        daily = panel()
+        box = QVBoxLayout(daily)
+        box.setContentsMargins(18, 16, 18, 12)
+        box.setSpacing(8)
+        title = QHBoxLayout()
+        title.addWidget(label('每日折算额度', 'section'))
+        title.addSpacing(14)
+        self.daily_legend = label('', 'muted')
+        self.daily_legend.setTextFormat(Qt.TextFormat.RichText)
+        # Never widen the window for the legend; it clips on narrow layouts (the tooltip has every name).
+        self.daily_legend.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        title.addWidget(self.daily_legend, 1)
+        self.daily_sub = label(f'近 {insights.HISTORY_DAYS} 天', 'muted')
+        title.addWidget(self.daily_sub)
+        box.addLayout(title)
+        self.daily = DailyChart()
+        box.addWidget(self.daily, 1)
+        row.addWidget(daily, 12)
+
+        side = panel()
+        box = QVBoxLayout(side)
+        box.setContentsMargins(18, 16, 18, 12)
+        box.setSpacing(8)
+        head = QHBoxLayout()
+        head.addWidget(label('项目分布', 'section'))
+        head.addStretch()
+        head.addWidget(label('按工作目录 · 额度 · 输出', 'muted'))
+        box.addLayout(head)
+        self.projects = Breakdown()
+        self.projects.setMinimumHeight(190)
+        box.addWidget(self.projects, 1)
+        row.addWidget(side, 5)
+        return row
 
     def build_metrics(self):
         metrics = QHBoxLayout()
@@ -759,9 +1058,9 @@ class Pulse(QMainWindow):
         self.cards = []
         specs = [
             ('最近速度', 'tok/s', True, ACCENT, False),
-            ('平均速度', 'tok/s', False, '#a6a6a6', False),
-            ('累计输出', 'tokens', False, '#b8a9ff', False),
-            ('累计输入', 'tokens', False, '#f0a986', False),
+            ('平均速度', 'tok/s', False, SECONDARY, False),
+            ('累计输出', 'tokens', False, SECONDARY, False),
+            ('累计输入', 'tokens', False, SECONDARY, False),
             ('折算额度', 'USD', False, GOLD, True),
         ]
         for title, unit, primary, accent, quota in specs:
@@ -870,6 +1169,10 @@ class Pulse(QMainWindow):
         except (TypeError, ValueError):
             return DEFAULT_USD_TO_CNY
 
+    def budget_limits(self):
+        b = self.collector.config.get('budget')
+        return b if isinstance(b, dict) else {}
+
     def refresh(self):
         if self.paused or self.busy:
             return
@@ -885,12 +1188,16 @@ class Pulse(QMainWindow):
         signature = (datetime.now().date(),) + tuple(
             (a, d['status'], d['errors'], len(d['requests']),
              d['requests'][-1].timestamp if d['requests'] else 0,
-             sum(r.output for r in d['requests']))
+             sum(r.output for r in d['requests']), (d.get('limits') or {}).get('t'))
             for a, d in data.items())
         if signature == self.signature:
+            # Quota windows can reset without new records; checking twice a minute is plenty.
+            if time.time() - self.insights_at >= 30:
+                self.render_insights()
             return
         self.signature = signature
         self.data = data
+        self.remote.set_data(data, self.custom_rates(), self.usd_to_cny(), self.budget_limits())
         if self.auto_period:
             # First load only: fall back to all records when nothing was recorded today.
             self.auto_period = False
@@ -918,6 +1225,8 @@ class Pulse(QMainWindow):
     def pause(self):
         self.paused = not self.paused
         self.pause_button.setText('继续' if self.paused else '暂停')
+        if self.tray:
+            self.tray_pause.setText('继续同步' if self.paused else '暂停同步')
         self.render()
         self.refresh()
 
@@ -939,13 +1248,65 @@ class Pulse(QMainWindow):
                            key=lambda r: r.timestamp)
         theme_color = ACCENT if self.selected == ALL else COLORS[self.selected]
         self.cards[0].accent = theme_color
-        self.cards[0].value.setStyleSheet(f'color:{theme_color};')
         self.cards[0].update()
         self.render_metrics()
         self.render_status(apps)
         self.chart.set_rows(self.rows, theme_color)
         self.breakdown.set_rows(self.rows, self.selected, self.custom_rates(), self.usd_to_cny())
+        self.render_history(apps)
         self.render_table()
+        self.render_insights()
+
+    def render_history(self, apps):
+        rates = self.custom_rates()
+        fx = self.usd_to_cny()
+        days = insights.history(self.data, apps, rates)
+        self.daily.set_days(days, None if self.selected == ALL else COLORS[self.selected], fx)
+        total = sum(d['usd'] for d in days)
+        used = [a for a in apps if any(d['apps'].get(a) for d in days)]
+        self.daily_legend.setText('&nbsp;&nbsp;&nbsp;'.join(
+            f'<span style="color:{COLORS[a]}">●</span>&nbsp;{DISPLAY[a]}' for a in used) if len(used) > 1 else '')
+        self.daily_sub.setText(f'近 {len(days)} 天 · 合计 {format_usd(total)}（约 {format_cny(total * fx)}）')
+        groups = insights.projects(self.rows, rates, limit=6)
+        self.projects.set_items(
+            [(g['name'], g['output'], g['usd'], series_color(i)) for i, g in enumerate(groups)],
+            [g['path'] or '日志未记录工作目录（如 Reasonix、反重力）' for g in groups], fx)
+
+    def render_insights(self):
+        """Quota / budget gauges, tray tooltip and once-per-window warnings."""
+        if not self.data:
+            return
+        self.insights_at = time.time()
+        fx = self.usd_to_cny()
+        quota = insights.quota(self.data)
+        budget = insights.budget(self.data, self.budget_limits(), self.custom_rates(), fx)
+        cards = []
+        for q in quota:
+            reset = f'{datetime.fromtimestamp(q["resets_at"]):%m-%d %H:%M} 重置' if q['resets_at'] else '已重置'
+            color = DANGER if q['left'] <= 10 else (WARN if q['left'] <= 25 else ACCENT)
+            cards.append((q['name'], f'剩 {q["left"]:.0f}%', f'已用 {q["used"]:.0f}% · {reset}', q['used'], color,
+                          f'截至 {datetime.fromtimestamp(q["as_of"]):%m-%d %H:%M} 的 Codex 记录'
+                          + (f'（{q["plan"]} 套餐）' if q['plan'] else '')))
+        for b in budget:
+            cards.append((b['name'], format_cny(b['spent']), f'上限 ¥{b["limit"]:g} · 已用 {b["pct"]:.0f}%',
+                          b['pct'], level_color(b['pct']), ''))
+        for g, card in zip(self.gauges, cards + [None] * len(self.gauges)):
+            g.setVisible(card is not None)
+            if card:
+                g.set(*card)
+        self.gauge_row.setVisible(bool(cards))
+
+        if self.tray:
+            today = insights.spend_usd(self.data, insights.day_start(time.time()), self.custom_rates())
+            tip = f'AI Pulse\n今日 {format_usd(today)}（约 {format_cny(today * fx)}）'
+            tip += ''.join(f'\n{q["name"]} 剩 {q["left"]:.0f}%' for q in quota)
+            self.tray.setToolTip(tip)
+        for key, title, message in insights.alerts(quota, budget):
+            if key in self.notified:
+                continue
+            self.notified.add(key)
+            if self.tray:
+                self.tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     def render_metrics(self):
         rows = self.rows
@@ -981,7 +1342,7 @@ class Pulse(QMainWindow):
             exact = (
                 f'折算 API 额度：${total_usd:,.4f}（约 ¥{total_cny:,.2f}，汇率 {fx:g}）\n'
                 f'无缓存原价折算：${full_usd:,.4f}（缓存节省 ${saved_usd:,.4f}）\n'
-                '可在「数据源 → API 计费」修改汇率与自定义模型单价'
+                '可在「设置 → API 计费」修改汇率与自定义模型单价'
             )
             self.cards[4].update_value(format_usd(total_usd), detail, exact)
 
@@ -1007,12 +1368,13 @@ class Pulse(QMainWindow):
         right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         rates = self.custom_rates()
         fx = self.usd_to_cny()
+        icons = {a: nav_dot_icon(COLORS[a]) for a in APPS}  # Identity on the dot; the name stays in ink.
         for row, r in enumerate(reversed(self.rows[-TABLE_LIMIT:])):
             usd, _ = estimate_usd(r, rates)
             cny = usd * fx
             values = [
                 datetime.fromtimestamp(r.timestamp).strftime('%m-%d %H:%M:%S'),
-                '●  ' + DISPLAY[r.app],
+                DISPLAY[r.app],
                 r.model or '未记录',
                 f'{r.output:,}',
                 f'{r.reasoning:,}',
@@ -1029,9 +1391,9 @@ class Pulse(QMainWindow):
                 if col >= 3:
                     item.setTextAlignment(right)
                 if col == 1:
-                    item.setForeground(QColor(COLORS[r.app]))
+                    item.setIcon(icons[r.app])
                 elif col == 5 and r.speed is not None:
-                    item.setForeground(QColor(ACCENT))
+                    item.setForeground(QColor(SECONDARY))
                 elif col == 6:
                     item.setForeground(QColor(GOLD if usd > 0 else MUTED))
                 elif col in (0, 4):
@@ -1049,7 +1411,11 @@ class Pulse(QMainWindow):
         tmp = path.with_suffix('.tmp')
         tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding='utf-8')
         tmp.replace(path)
+        old_remote = self.collector.config.get('remote')
         self.collector = Collector(config)
+        if config.get('remote') != old_remote:
+            self.remote.apply(config.get('remote', {}))
+        self.remote.set_data(self.data, self.custom_rates(), self.usd_to_cny(), self.budget_limits())
         self.signature = None  # New collector: force the next scan result to render.
         if self.data:
             self.render()
@@ -1070,13 +1436,13 @@ class Pulse(QMainWindow):
             QMessageBox.information(self, '正在同步', '请等待本次读取完成后再打开数据源。')
             return
         win = QDialog(self)
-        win.setWindowTitle('数据源与计费设置')
+        win.setWindowTitle('设置')
         win.resize(780, 620)
         box = QVBoxLayout(win)
         box.setContentsMargins(22, 22, 22, 22)
         box.setSpacing(14)
-        box.addWidget(label('管理数据源与 API 计费', 'heading'))
-        box.addWidget(label('只读取本地用量与时间信息，汇率与单价配置仅保存在本机。', 'muted'))
+        box.addWidget(label('设置', 'heading'))
+        box.addWidget(label('数据源、API 计费、预算与后台运行。只读取本地用量与时间信息，配置仅保存在本机。', 'muted'))
         tabs = QTabWidget()
         box.addWidget(tabs, 1)
         fields = {}
@@ -1158,6 +1524,41 @@ class Pulse(QMainWindow):
         bform.addStretch()
         tabs.addTab(billing, 'API 计费')
 
+        general = QWidget()
+        gform = QVBoxLayout(general)
+        gform.setSpacing(10)
+        gform.addWidget(label('后台运行', 'section'))
+        tray_box = QCheckBox('关闭窗口时最小化到托盘（统计、预算提醒和手机查看继续工作）')
+        tray_box.setChecked(bool(config.get('tray', True)))
+        gform.addWidget(tray_box)
+        startup_box = QCheckBox('开机自动启动（启动后直接最小化到托盘）')
+        was_startup = autostart.enabled()
+        startup_box.setChecked(was_startup)
+        startup_box.setEnabled(autostart.supported())
+        gform.addWidget(startup_box)
+        gform.addSpacing(8)
+        gform.addWidget(label('预算提醒（人民币，按折算额度计算，0 或留空表示不限制）', 'section'))
+        budget_cfg = config.get('budget') or {}
+        budget_fields = {}
+        for key, title in (('daily_cny', '每日预算 ¥'), ('monthly_cny', '每月预算 ¥')):
+            line = QHBoxLayout()
+            name = label(title)
+            name.setFixedWidth(90)
+            line.addWidget(name)
+            edit = QLineEdit(f'{budget_cfg.get(key, 0):g}' if budget_cfg.get(key) else '')
+            edit.setPlaceholderText('不限制')
+            edit.setMaximumWidth(200)
+            line.addWidget(edit)
+            line.addStretch()
+            gform.addLayout(line)
+            budget_fields[key] = edit
+        gnote = label('用量达到预算的 80% 和 100% 时各提醒一次（托盘通知），手机页面顶部同步显示。'
+                      'Codex 5 小时或每周额度剩余不足 10% 时也会提醒。', 'muted')
+        gnote.setWordWrap(True)
+        gform.addWidget(gnote)
+        gform.addStretch()
+        tabs.addTab(general, '常规与预算')
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存设置')
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
@@ -1179,6 +1580,24 @@ class Pulse(QMainWindow):
                     return
             else:
                 config['usd_to_cny'] = DEFAULT_USD_TO_CNY
+            budget = {}
+            for key, edit in budget_fields.items():
+                try:
+                    value = float(edit.text().strip() or 0)
+                    if not 0 <= value < 1e9:
+                        raise ValueError
+                except ValueError:
+                    QMessageBox.warning(win, '预算格式无效', '预算请输入不小于 0 的数字，留空表示不限制。')
+                    return
+                budget[key] = value
+            config['budget'] = budget
+            config['tray'] = tray_box.isChecked()
+            if startup_box.isChecked() or was_startup:
+                try:
+                    autostart.set_enabled(startup_box.isChecked())
+                except OSError as e:
+                    QMessageBox.warning(win, '开机启动设置失败', str(e))
+                    return
             for app, (roots, imports) in fields.items():
                 config['roots'][app] = lines(roots)
                 config['imports'][app] = lines(imports)
@@ -1237,6 +1656,7 @@ class Pulse(QMainWindow):
         cols = [
             'app', 'timestamp', 'model', 'input', 'output', 'reasoning',
             'cached', 'cache_write', 'cache_write_1h', 'seconds', 'timing', 'speed', 'cost_usd', 'cost_cny',
+            'project',
         ]
         rates = self.custom_rates()
         fx = self.usd_to_cny()
@@ -1258,11 +1678,182 @@ class Pulse(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, '导出失败', str(e))
 
+    def render_remote(self):
+        headline, detail = self.remote.state()
+        on = self.remote.running
+        self.remote_label.setText(f'{"●" if on else "○"}  手机查看：{headline}')
+        self.remote_label.setToolTip(detail)
+        self.remote_label.setStyleSheet(f'color:{ACCENT if on and not detail else MUTED};font-size:12px;')
+
+    def remote_dialog(self):
+        win = QDialog(self)
+        win.setWindowTitle('手机查看')
+        win.resize(560, 720)
+        box = QVBoxLayout(win)
+        box.setContentsMargins(22, 22, 22, 22)
+        box.setSpacing(12)
+        box.addWidget(label('手机查看', 'heading'))
+        intro = label('在手机浏览器中查看与桌面版相同的统计。只传输 Token 数、模型名、时间与折算额度，'
+                      '不包含对话内容。需保持本程序运行。', 'muted')
+        intro.setWordWrap(True)
+        box.addWidget(intro)
+
+        cfg = copy_config(self.collector.config).get('remote') or defaults()['remote']
+        enabled = QCheckBox('开启手机查看')
+        enabled.setChecked(cfg['enabled'])
+        tunnel = QCheckBox('外网访问（通过 Cloudflare 通道，手机不在同一网络也能打开）')
+        tunnel.setChecked(cfg['tunnel'])
+        lan = QCheckBox('允许同一局域网的设备直接访问')
+        lan.setChecked(cfg['lan'])
+        for w in (enabled, tunnel, lan):
+            box.addWidget(w)
+
+        state = label('', 'section')
+        box.addWidget(state)
+        qr = QLabel()
+        qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        qr.setFixedSize(230, 230)
+        box.addWidget(qr, 0, Qt.AlignmentFlag.AlignHCenter)
+        link = label('', 'muted')
+        link.setWordWrap(True)
+        link.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        box.addWidget(link)
+
+        actions = QHBoxLayout()
+        copy_button = button('复制链接')
+        reset_button = button('重置密钥')
+        actions.addWidget(copy_button)
+        actions.addWidget(reset_button)
+        actions.addStretch()
+        box.addLayout(actions)
+
+        box.addWidget(label('高级设置', 'section'))
+        port = QLineEdit(str(cfg['port']))
+        port.setPlaceholderText('端口，默认 8765')
+        exe = QLineEdit(cfg['cloudflared'])
+        exe.setPlaceholderText(find_cloudflared() or '未找到 cloudflared，可安装后自动识别或在此填写路径')
+        fixed_token = QLineEdit(cfg['tunnel_token'])
+        fixed_token.setEchoMode(QLineEdit.EchoMode.Password)
+        fixed_token.setPlaceholderText('可选：Cloudflare 固定通道令牌（不填则使用每次启动随机分配的地址）')
+        fixed_url = QLineEdit(cfg['public_url'])
+        fixed_url.setPlaceholderText('可选：固定通道对应的外网地址，例如 https://pulse.example.com')
+        for w in (port, exe, fixed_token, fixed_url):
+            box.addWidget(w)
+        box.addStretch()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存并应用')
+        buttons.button(QDialogButtonBox.StandardButton.Close).setText('关闭')
+        box.addWidget(buttons)
+
+        def current_link():
+            return self.remote.public_url() or self.remote.local_url()
+
+        def refresh_view():
+            headline, detail = self.remote.state()
+            state.setText(f'状态：{headline}' + (f'（{detail}）' if detail else ''))
+            url = current_link()
+            if url:
+                qr.setPixmap(qr_pixmap(url, 230))
+                kind = '外网链接' if self.remote.public_url() else '本机链接（外网地址生成前仅限这台电脑或局域网）'
+                link.setText(f'{kind}：{url}')
+            else:
+                qr.setPixmap(QPixmap())
+                qr.setText('开启后在此显示二维码')
+                link.setText('')
+            copy_button.setEnabled(bool(url))
+
+        def copy():
+            QApplication.clipboard().setText(current_link())
+            copy_button.setText('已复制')
+            QTimer.singleShot(1500, lambda: copy_button.setText('复制链接'))
+
+        def apply(reset=False):
+            try:
+                port_value = int(port.text().strip() or 8765)
+                if not 0 < port_value < 65536:
+                    raise ValueError
+            except ValueError:
+                QMessageBox.warning(win, '端口无效', '请输入 1–65535 之间的端口号。')
+                return
+            config = copy_config(self.collector.config)
+            r = config.setdefault('remote', defaults()['remote'])
+            r.update({'enabled': enabled.isChecked(), 'tunnel': tunnel.isChecked(), 'lan': lan.isChecked(),
+                      'port': port_value, 'cloudflared': exe.text().strip(),
+                      'tunnel_token': fixed_token.text().strip(), 'public_url': fixed_url.text().strip()})
+            if reset or not r.get('token'):
+                r['token'] = new_token()
+            try:
+                self.save_config(config)
+            except OSError as e:
+                QMessageBox.critical(win, '保存失败', str(e))
+
+        def reset():
+            if QMessageBox.question(win, '重置密钥', '重置后旧链接和已添加到主屏幕的入口都会失效，需要重新扫码。继续？') \
+                    == QMessageBox.StandardButton.Yes:
+                apply(reset=True)
+
+        copy_button.clicked.connect(copy)
+        reset_button.clicked.connect(reset)
+        buttons.accepted.connect(apply)
+        buttons.rejected.connect(win.reject)
+        self.remote_signal.changed.connect(refresh_view)
+        refresh_view()
+        try:
+            self.run_dialog(win)
+        finally:
+            self.remote_signal.changed.disconnect(refresh_view)
+
+    # ---- tray
+
+    def setup_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self.tray = QSystemTrayIcon(app_icon(), self)
+        menu = QMenu(self)
+        menu.addAction('显示窗口', self.show_window)
+        self.tray_pause = menu.addAction('暂停同步', self.pause)
+        menu.addSeparator()
+        menu.addAction('退出 AI Pulse', self.quit_app)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self.tray_activated)
+        self.tray.setToolTip('AI Pulse')
+        self.tray.show()
+
+    def tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
+            self.show_window()
+
+    def show_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def quit_app(self):
+        self.quitting = True
+        self.close()
+
     def closeEvent(self, event):
+        if self.tray and self.tray.isVisible() and self.collector.config.get('tray', True) and not self.quitting:
+            # Keep scanning (and serving the phone page) in the background.
+            event.ignore()
+            self.hide()
+            if not self.tray_hinted:
+                self.tray_hinted = True
+                self.tray.showMessage('AI Pulse 仍在后台运行', '统计、预算提醒和手机查看会继续工作。右键托盘图标可以退出。',
+                                      QSystemTrayIcon.MessageIcon.Information, 5000)
+            return
+        if self.tray:
+            self.tray.hide()
+        self.remote.stop()
         self.timer.stop()
         if self.busy:
             self.worker.wait()
         event.accept()
+        QApplication.quit()
+
+
+INSTANCE = 'AI-Pulse-' + (os.environ.get('USERNAME') or os.environ.get('USER') or 'user')
 
 
 def main():
@@ -1274,8 +1865,24 @@ def main():
     font = QFont('Microsoft YaHei UI')
     font.setPixelSize(13)
     app.setFont(font)
+    # One instance per user: a second launch (e.g. double-click while hidden in the tray)
+    # asks the running one to show its window instead of competing for the phone port.
+    from PySide6.QtNetwork import QLocalServer, QLocalSocket
+    probe = QLocalSocket()
+    probe.connectToServer(INSTANCE)
+    if probe.waitForConnected(500):
+        probe.write(b'show')
+        probe.waitForBytesWritten(500)
+        probe.disconnectFromServer()
+        return
+    # The window hides into the tray; quitting is explicit (closeEvent / tray menu).
+    app.setQuitOnLastWindowClosed(False)
     window = Pulse(smoke='--smoke' in sys.argv)
-    window.show()
+    server = QLocalServer(window)
+    server.newConnection.connect(lambda: (server.nextPendingConnection(), window.show_window()))
+    server.listen(INSTANCE)
+    if autostart.MINIMIZED not in sys.argv or not window.tray:
+        window.show()
     sys.exit(app.exec())
 
 

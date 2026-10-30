@@ -4,6 +4,7 @@ from pathlib import Path
 root = Path(SPECPATH)
 a = Analysis([str(root / 'main.py')], pathex=[str(root)], binaries=[],
              datas=[(str(root / 'licenses'), 'licenses'),
+                    (str(root / 'pulse' / 'mobile.html'), 'pulse'),
                     (str(root / 'THIRD_PARTY.md'), '.')],
              hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
              excludes=[], noarchive=False)

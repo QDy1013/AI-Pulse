@@ -54,6 +54,7 @@ class Request:
     cache_write: int = 0
     cost_usd: float | None = None
     cache_write_1h: int = 0  # Subset of cache_write billed at the 1-hour cache rate.
+    project: str = ''  # Working directory the tool ran in, when the log records it.
 
     @property
     def speed(self):
@@ -82,7 +83,10 @@ def defaults():
         'Antigravity': [str(h / '.gemini/antigravity/conversations')],
         'WorkBuddy': [str(h / '.workbuddy/projects')],
     }, 'imports': {app: [] for app in APPS}, 'interval': 3,
-       'antigravity_models': {}, 'usd_to_cny': 7.15, 'model_rates': {}}
+       'antigravity_models': {}, 'usd_to_cny': 7.15, 'model_rates': {},
+       'tray': True, 'budget': {'daily_cny': 0.0, 'monthly_cny': 0.0},
+       'remote': {'enabled': False, 'tunnel': True, 'lan': False, 'port': 8765, 'token': '',
+                  'cloudflared': '', 'tunnel_token': '', 'public_url': ''}}
 
 def antigravity_model(number, aliases, detected=''):
     """Resolve Antigravity's placeholder enum (e.g. 1401 = MODEL_PLACEHOLDER_M401)
@@ -91,12 +95,37 @@ def antigravity_model(number, aliases, detected=''):
     return aliases.get(str(number)) or detected or f'未命名模型 #{number}'
 
 def usage_request(app, key, timestamp, usage, model='', seconds=None, timing='unavailable',
-                  cache_write=0, cost_usd=None, cache_write_1h=0):
+                  cache_write=0, cost_usd=None, cache_write_1h=0, project=''):
     return Request(str(key), app, stamp(timestamp), str(model)[:160],
                    int(number(usage.get('input_tokens'))), int(number(usage.get('output_tokens'))),
                    int(number(usage.get('reasoning_output_tokens'))),
                    int(number(usage.get('cached_input_tokens'))), seconds, timing,
-                   int(number(cache_write)), cost_usd, int(number(cache_write_1h)))
+                   int(number(cache_write)), cost_usd, int(number(cache_write_1h)),
+                   project if isinstance(project, str) else '')
+
+WINDOW_KINDS = ('primary', 'secondary')
+
+def rate_limits(payload, when):
+    """Codex quota snapshot from a token_count event: used percent per window and reset time."""
+    rl = payload.get('rate_limits')
+    if not isinstance(rl, dict) or rl.get('limit_id') not in (None, 'codex'):
+        return None
+    windows = []
+    for kind in WINDOW_KINDS:
+        w = rl.get(kind)
+        if not isinstance(w, dict) or not number(w.get('window_minutes')):
+            continue
+        if w.get('resets_at') is not None:
+            reset = stamp(w['resets_at'])
+        elif w.get('resets_in_seconds') is not None:  # Older clients report a countdown.
+            reset = when + number(w['resets_in_seconds'])
+        else:
+            reset = 0.0
+        windows.append({'minutes': number(w['window_minutes']), 'used': min(100.0, number(w.get('used_percent'))),
+                        'resets_at': reset})
+    if not windows or when <= 0:
+        return None
+    return {'t': when, 'plan': str(rl.get('plan_type') or ''), 'windows': windows}
 
 def consume(app, d, state, generic=False):
     """Normalize known schemas. Duplicate snapshots replace the same request."""
@@ -117,7 +146,12 @@ def consume(app, d, state, generic=False):
     if app == 'Codex':
         if t == 'session_meta' and not c.get('start'):
             c['start'] = stamp(p.get('timestamp') or ts)
+        if t in ('session_meta', 'turn_context') and isinstance(p.get('cwd'), str):
+            c['cwd'] = p['cwd']
         if t == 'turn_context': c['model'] = p.get('model', '')
+        if t == 'event_msg' and p.get('type') == 'token_count':
+            limits = rate_limits(p, stamp(ts))
+            if limits and limits['t'] >= c.get('limits', {}).get('t', 0): c['limits'] = limits
         if t == 'event_msg' and p.get('type') in ('task_started', 'turn_started'):
             c['start'] = stamp(p.get('started_at') or ts)
             c['turn'] = p.get('turn_id', str(ts))
@@ -136,7 +170,7 @@ def consume(app, d, state, generic=False):
             key = p.get('response_id') or ('record:' + str(d.get('ordinal', ts)))
             r = usage_request(app, key, ts, u, c.get('model', ''), seconds if seconds > 0 else None,
                               'turn_elapsed_estimate' if seconds > 0 else 'unavailable',
-                              u.get('cache_write_input_tokens', 0))
+                              u.get('cache_write_input_tokens', 0), project=c.get('cwd', ''))
             out[r.key] = r
             # Next request elapsed time starts after the previous response, includes tools/waiting.
             c['start'] = stamp(ts)
@@ -148,10 +182,11 @@ def consume(app, d, state, generic=False):
             c['total'] = total
             if not any(delta.values()): return
             r = usage_request(app, 'legacy:' + str(ts), ts, delta, c.get('model', ''),
-                              cache_write=delta.get('cache_write_input_tokens', 0))
+                              cache_write=delta.get('cache_write_input_tokens', 0), project=c.get('cwd', ''))
             out[r.key] = r
             c.setdefault('legacy', []).append((r.timestamp, r.key))
     elif app == 'Claude':
+        if isinstance(d.get('cwd'), str): c['cwd'] = d['cwd']
         if t == 'user' or t == 'api-request': c['start'] = stamp(ts)
         if t != 'assistant': return
         m = d.get('message') or {}
@@ -176,11 +211,12 @@ def consume(app, d, state, generic=False):
         seconds = stamp(ts) - start if start else 0
         r = usage_request(app, key, ts, u, m.get('model', ''), seconds if seconds > 0 else None,
                           'turn_elapsed_estimate' if seconds > 0 else 'unavailable', raw_cw,
-                          cache_write_1h=cw_1h)
+                          cache_write_1h=cw_1h, project=c.get('cwd', ''))
         out[r.key] = r
     elif app == 'WorkBuddy':
         pd = d.get('providerData') or {}
         now = stamp(ts)
+        if isinstance(d.get('cwd'), str): c['cwd'] = d['cwd']
         raw_id = pd.get('messageId') or (d.get('id') if isinstance(pd.get('usage'), dict) else None)
         if raw_id:
             key = str(d.get('sessionId', '')) + ':' + str(raw_id)
@@ -200,7 +236,8 @@ def consume(app, d, state, generic=False):
         seconds = now - start if start and now > start else 0
         out[key] = usage_request(app, key, ts, u, pd.get('model') or pd.get('requestModelName', ''),
                                  seconds if seconds > 0 else None,
-                                 'turn_elapsed_estimate' if seconds > 0 else 'unavailable')
+                                 'turn_elapsed_estimate' if seconds > 0 else 'unavailable',
+                                 project=c.get('cwd', ''))
         if now > c.get('start', 0): c['start'] = now
     elif app == 'Reasonix':
         if 'completion' not in d or 'ts' not in d: return
@@ -239,7 +276,7 @@ class Collector:
             for raw in self.config.get('imports', {}).get(app, []):
                 p = Path(raw).expanduser()
                 if p.is_file(): paths[p] = True
-            rows, latest = [], 0
+            rows, latest, limits = [], 0, None
             for path, generic in paths.items():
                 key = (app, str(path), generic)
                 live_keys.add(key)
@@ -297,6 +334,10 @@ class Collector:
                     # last known rows so totals do not flicker down for one refresh.
                     errors += 1
                     rows.extend(self.files[key].requests.values())
+                # The newest quota snapshot across all session files is the current one.
+                found = self.files[key].context.get('limits')
+                if found and (not limits or found['t'] > limits['t']):
+                    limits = found
             # Same response can appear in copied Claude session logs: count it once.
             unique = {}
             for r in rows:
@@ -311,6 +352,6 @@ class Collector:
             elif existing: status = '已找到目录 · 等待用量记录'
             else: status = '未找到数据 · 可设置路径或导入'
             result[app] = {'status': status, 'requests': rows, 'files': len(paths),
-                           'latest': latest, 'errors': errors, 'detected': bool(existing)}
+                           'latest': latest, 'errors': errors, 'detected': bool(existing), 'limits': limits}
         self.files = {k: v for k, v in self.files.items() if k in live_keys or k == ('antigravity_names',)}
         return result

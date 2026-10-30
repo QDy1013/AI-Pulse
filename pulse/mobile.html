@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AI Pulse">
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<title>AI Pulse</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b0c0e; --panel: #141619; --raised: #191c20; --border: #23262b; --line: #2f333a;
+  --grid: #1d2025; --track: #202328;
+  --text: #eceef1; --secondary: #a6abb4; --muted: #767c86;
+  --accent: #6fdcaa; --gold: #e7bd6c; --warn: #f2b443; --danger: #ee6b6b;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  padding: max(14px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  -webkit-text-size-adjust: 100%;
+}
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand img { width: 30px; height: 30px; }
+.brand b { font-size: 17px; letter-spacing: 1px; }
+.sync { color: var(--muted); font-size: 12px; text-align: right; }
+.sync i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 5px; }
+.sync.stale i { background: var(--danger); }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin: 0 -16px 10px; padding-left: 16px; padding-right: 16px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1px solid var(--border); background: var(--panel); color: var(--secondary); border-radius: 999px; padding: 6px 12px; font-size: 13px; transition: background .15s, color .15s, border-color .15s; }
+.chip.on { background: var(--raised); border-color: var(--line); color: var(--text); font-weight: 600; }
+.chip .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.seg { display: flex; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 7px 0; border-radius: 7px; font-size: 13px; transition: background .15s, color .15s; }
+.seg button.on { background: #22262c; color: var(--text); font-weight: 600; }
+button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.card { position: relative; background: linear-gradient(180deg, var(--raised), var(--panel)); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; overflow: hidden; }
+.card::before { content: ''; position: absolute; left: 14px; right: 14px; top: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(166,171,180,.25), transparent); }
+.card.primary { border-color: #24392f; }
+.card.primary::before { background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+.card.wide { grid-column: 1 / -1; border-color: #3a3122; }
+.card.wide::before { background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+.label { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 6px; }
+.unit { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .4px; border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
+.primary .unit { color: var(--accent); border-color: #24453a; }
+.wide .unit { color: var(--gold); border-color: #4a3c22; }
+.num { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wide .num { color: var(--gold); }
+.sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel { background: linear-gradient(180deg, var(--raised), var(--panel) 120px); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.panel h2 { font-size: 14px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: baseline; }
+.panel h2 span { color: var(--muted); font-size: 12px; font-weight: 400; }
+svg.trend { width: 100%; height: 130px; display: block; }
+.empty { color: var(--muted); font-size: 13px; text-align: center; padding: 26px 0; }
+.bar { margin-bottom: 10px; }
+.bar:last-child { margin-bottom: 0; }
+.bar .row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+.bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .val { color: var(--secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bar .track { height: 4px; background: var(--track); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.bar .fill { height: 100%; border-radius: 2px; transform-origin: left; transition: width .35s ease; }
+.bar .dot, .req .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.req { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 0; border-top: 1px solid var(--grid); }
+.req:first-of-type { border-top: 0; padding-top: 0; }
+.req .m { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.req .c { color: var(--gold); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.req .d { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.req .s { color: var(--secondary); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 11px; text-align: center; margin-top: 16px; }
+.alert { display: none; background: #241417; border: 1px solid #4a2328; color: #f3a9a9; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 13px; }
+.gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.gauges:empty { display: none; }
+.gauge { background: linear-gradient(180deg, var(--raised), var(--panel)); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.gauge .top { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.gauge .t { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gauge .v { font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gauge .track { height: 4px; background: var(--track); border-radius: 2px; margin: 9px 0 7px; overflow: hidden; }
+.gauge .fill { height: 100%; border-radius: 2px; transition: width .35s ease; }
+.gauge .s { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+svg.daily { width: 100%; height: 120px; display: block; }
+/* Instant feedback while a filter change is fetching. */
+.grid, .panel { transition: opacity .18s ease; }
+body.loading .grid, body.loading .panel { opacity: .55; }
+/* Each panel is laid out on its own, so a re-render does not reflow the whole page. */
+.panel, .gauge, .card { contain: layout paint; }
+.caption { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 17px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><img src="/icon.svg" alt=""><b>AI PULSE</b></div>
+  <div class="sync" id="sync"><i></i><span>连接中…</span></div>
+</header>
+<div class="alert" id="alert"></div>
+<div class="alert" id="limitWarn"></div>
+<div class="gauges" id="gauges"></div>
+<div class="chips" id="apps"></div>
+<div class="seg" id="periods">
+  <button data-p="today">今天</button><button data-p="7d">近 7 天</button><button data-p="all">全部记录</button>
+</div>
+<div class="grid">
+  <div class="card primary"><div class="label">最近速度<span class="unit">tok/s</span></div><div class="num" id="recent">—</div><div class="sub" id="recentSub">&nbsp;</div></div>
+  <div class="card"><div class="label">平均速度<span class="unit">tok/s</span></div><div class="num" id="avg">—</div><div class="sub" id="avgSub">&nbsp;</div></div>
+  <div class="card"><div class="label">累计输出<span class="unit">tokens</span></div><div class="num" id="out">—</div><div class="sub" id="outSub">&nbsp;</div></div>
+  <div class="card"><div class="label">累计输入<span class="unit">tokens</span></div><div class="num" id="in">—</div><div class="sub" id="inSub">&nbsp;</div></div>
+  <div class="card wide"><div class="label">折算额度<span class="unit">USD</span></div><div class="num" id="usd">—</div><div class="sub" id="usdSub">&nbsp;</div></div>
+</div>
+<div class="panel"><h2>请求速度趋势<span>最近 40 次 · 虚线为均值</span></h2><div id="trend"></div></div>
+<div class="panel"><h2>每日折算额度<span id="dailySub">近 30 天</span></h2><div id="daily"></div><div class="caption" id="dailyInfo"></div></div>
+<div class="panel"><h2 id="splitTitle">软件输出分布<span>额度 · 输出</span></h2><div id="split"></div></div>
+<div class="panel"><h2>项目分布<span>按工作目录 · 额度 · 输出</span></h2><div id="projects"></div></div>
+<div class="panel"><h2>最近请求<span id="count"></span></h2><div id="list"></div></div>
+<p class="note">速度含等待与工具耗时；额度按公开单价折算，以平台账单为准。</p>
+<script>
+(function () {
+  var KEY = '__PULSE_KEY__';
+  var APPS = ['Codex', 'Claude', 'Reasonix', 'Antigravity', 'WorkBuddy'];
+  var NAMES = { Codex: 'Codex', Claude: 'Claude Code', Reasonix: 'Reasonix', Antigravity: '反重力', WorkBuddy: 'WorkBuddy' };
+  // Validated categorical order (same as the desktop app); models and projects reuse it, never cycled.
+  var COLORS = { Codex: '#199e70', Claude: '#d95926', Reasonix: '#9085e9', Antigravity: '#d55181', WorkBuddy: '#3987e5' };
+  var ACCENT = '#6fdcaa', WARN = '#f2b443', DANGER = '#ee6b6b', OTHER = '#5d636d', GRID = '#1d2025', AXIS = '#2f333a', INK3 = '#767c86';
+  var PALETTE = APPS.map(function (a) { return COLORS[a]; });
+  function series(i) { return i < PALETTE.length ? PALETTE[i] : OTHER; }
+  var state = { app: 'all', period: 'today' };
+  var lastOk = 0, timer = null, inflight = false;
+
+  // Keep the key in the address so bookmarks / home-screen shortcuts keep working.
+  try { if (location.search.indexOf('k=') < 0) history.replaceState(null, '', '/?k=' + KEY); } catch (e) {}
+  try {
+    var saved = JSON.parse(localStorage.getItem('pulse-filter') || '{}');
+    if (saved.app === 'all' || APPS.indexOf(saved.app) >= 0) state.app = saved.app;
+    if (['today', '7d', 'all'].indexOf(saved.period) >= 0) state.period = saved.period;
+  } catch (e) {}
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function compact(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + ' B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + ' M';
+    return Math.round(n).toLocaleString('en-US');
+  }
+  function usd(a) {
+    if (a >= 100) return '$' + a.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    if (a >= 1) return '$' + a.toFixed(2);
+    if (a >= 0.01) return '$' + a.toFixed(3);
+    if (a > 0) return '$' + a.toFixed(4);
+    return '$0.00';
+  }
+  function cny(a) {
+    if (a >= 100) return '¥' + a.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    if (a >= 0.01) return '¥' + a.toFixed(2);
+    if (a > 0) return '¥' + a.toFixed(3);
+    return '¥0.00';
+  }
+  function time(t) {
+    var d = new Date(t * 1000), p = function (x) { return (x < 10 ? '0' : '') + x; };
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  // Round an axis maximum up so every tick lands on a round number (same rule as the desktop).
+  function niceMax(v, intervals) {
+    if (!(v > 0)) return 0;
+    var step = v / intervals, mag = Math.pow(10, Math.floor(Math.log10(step)));
+    var ms = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+    for (var i = 0; i < ms.length; i++) if (ms[i] * mag >= step) return ms[i] * mag * intervals;
+    return v;
+  }
+  function tickUsd(v) { return v >= 10 || !v ? '$' + Math.round(v).toLocaleString('en-US') : usd(v); }
+  function save() { try { localStorage.setItem('pulse-filter', JSON.stringify(state)); } catch (e) {} }
+
+  function buildChips() {
+    var box = $('apps');
+    box.textContent = '';
+    ['all'].concat(APPS).forEach(function (a) {
+      var b = el('button', 'chip' + (state.app === a ? ' on' : ''));
+      var dot = el('span', 'dot');
+      dot.style.background = a === 'all' ? ACCENT : COLORS[a];
+      b.appendChild(dot);
+      b.appendChild(document.createTextNode(a === 'all' ? '用量总览' : NAMES[a]));
+      b.onclick = function () { state.app = a; save(); buildChips(); load(true); };
+      box.appendChild(b);
+    });
+  }
+  function markPeriods() {
+    Array.prototype.forEach.call($('periods').children, function (b) {
+      b.className = b.getAttribute('data-p') === state.period ? 'on' : '';
+      b.onclick = function () { state.period = b.getAttribute('data-p'); save(); markPeriods(); load(true); };
+    });
+  }
+
+  function trend(d) {
+    var box = $('trend');
+    box.textContent = '';
+    var pts = d.trend;
+    if (!pts.length) { box.appendChild(el('div', 'empty', '此时间范围暂无可计算速度的请求')); return; }
+    var W = 340, H = 130, L = 30, T = 8, R = 6, B = 18;
+    var max = niceMax(Math.max.apply(null, pts.map(function (p) { return p.speed; })) * 1.08, 3) || 60;
+    var color = state.app === 'all' ? ACCENT : COLORS[state.app];
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('class', 'trend');
+    function add(tag, attrs, text) {
+      var n = document.createElementNS(ns, tag);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (text !== undefined) n.textContent = text;
+      svg.appendChild(n);
+      return n;
+    }
+    var pw = W - L - R, ph = H - T - B;
+    for (var i = 0; i < 4; i++) {
+      var y = T + ph * i / 3;
+      add('line', { x1: L, x2: W - R, y1: y, y2: y, stroke: i === 3 ? AXIS : GRID });
+      add('text', { x: L - 5, y: y + 3.5, fill: INK3, 'font-size': 10, 'text-anchor': 'end' }, Math.round(max * (1 - i / 3)));
+    }
+    var xy = pts.map(function (p, i) {
+      var x = pts.length === 1 ? L + pw / 2 : L + pw * i / (pts.length - 1);
+      return [x, T + ph - ph * p.speed / max];
+    });
+    var line = 'M' + xy[0][0] + ',' + xy[0][1];
+    for (var j = 1; j < xy.length; j++) {
+      var a = xy[j - 1], b = xy[j], m = (a[0] + b[0]) / 2;
+      line += ' C' + m + ',' + a[1] + ' ' + m + ',' + b[1] + ' ' + b[0] + ',' + b[1];
+    }
+    var defs = add('defs', {});
+    var g = document.createElementNS(ns, 'linearGradient');
+    g.setAttribute('id', 'fade'); g.setAttribute('x1', 0); g.setAttribute('x2', 0); g.setAttribute('y1', 0); g.setAttribute('y2', 1);
+    [[0, 0.3], [1, 0]].forEach(function (s) {
+      var st = document.createElementNS(ns, 'stop');
+      st.setAttribute('offset', s[0]); st.setAttribute('stop-color', color); st.setAttribute('stop-opacity', s[1]);
+      g.appendChild(st);
+    });
+    defs.appendChild(g);
+    if (xy.length > 1) {
+      add('path', { d: line + ' L' + xy[xy.length - 1][0] + ',' + (T + ph) + ' L' + xy[0][0] + ',' + (T + ph) + 'Z', fill: 'url(#fade)' });
+    }
+    if (d.avg_speed && xy.length > 1) {
+      var ay = T + ph - ph * Math.min(d.avg_speed, max) / max;
+      add('line', { x1: L, x2: W - R, y1: ay, y2: ay, stroke: color, 'stroke-opacity': 0.45, 'stroke-dasharray': '1 3' });
+    }
+    add('path', { d: xy.length > 1 ? line : 'M' + L + ',' + xy[0][1] + ' H' + (W - R), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linecap': 'round' });
+    var last = xy[xy.length - 1];
+    add('circle', { cx: last[0], cy: last[1], r: 3.5, fill: color });
+    add('text', { x: L, y: H - 3, fill: INK3, 'font-size': 10 }, '较早');
+    add('text', { x: W - R, y: H - 3, fill: INK3, 'font-size': 10, 'text-anchor': 'end' }, '最近');
+    box.appendChild(svg);
+  }
+
+  function split(d) {
+    $('splitTitle').firstChild.textContent = state.app === 'all' ? '软件输出分布' : '模型输出分布';
+    var box = $('split');
+    box.textContent = '';
+    if (!d.split.length) { box.appendChild(el('div', 'empty', '暂无记录')); return; }
+    var top = Math.max.apply(null, d.split.map(function (s) { return s.output; }).concat([1]));
+    d.split.forEach(function (s, i) {
+      var color = s.app ? COLORS[s.app] : series(i);
+      var active = s.output > 0 || s.usd > 0;
+      var row = el('div', 'bar');
+      var head = el('div', 'row');
+      head.appendChild(el('span', 'name', s.app ? NAMES[s.app] : s.name));
+      head.appendChild(el('span', 'val', active ? usd(s.usd) + ' · ' + compact(s.output) : '0'));
+      row.appendChild(head);
+      var track = el('div', 'track'), fill = el('div', 'fill');
+      fill.style.width = (s.output ? Math.max(2, 100 * s.output / top) : 0) + '%';
+      fill.style.background = color;
+      track.appendChild(fill);
+      row.appendChild(track);
+      if (!active) row.style.opacity = 0.5;
+      box.appendChild(row);
+    });
+  }
+
+  function list(d) {
+    $('count').textContent = d.count.toLocaleString('en-US') + ' 次 · 最近 ' + d.recent.length + ' 条';
+    var box = $('list');
+    box.textContent = '';
+    if (!d.recent.length) { box.appendChild(el('div', 'empty', '此时间范围暂无请求')); return; }
+    d.recent.forEach(function (r) {
+      var item = el('div', 'req');
+      item.appendChild(el('div', 'm', (r.model || '未记录')));
+      item.appendChild(el('div', 'c', usd(r.usd)));
+      var meta = el('div', 'd', time(r.t) + ' · ' + NAMES[r.app] + ' · 输出 ' + compact(r.output) + (r.reasoning ? ' · 思考 ' + compact(r.reasoning) : ''));
+      item.appendChild(meta);
+      item.appendChild(el('div', 's', r.speed == null ? '—' : '≈ ' + r.speed.toFixed(1) + '/s'));
+      box.appendChild(item);
+    });
+  }
+
+  function short(t) {
+    var d = new Date(t * 1000), p = function (x) { return (x < 10 ? '0' : '') + x; };
+    return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function gauge(title, value, sub, pct, color) {
+    var g = el('div', 'gauge'), top = el('div', 'top');
+    top.appendChild(el('span', 't', title));
+    var v = el('span', 'v', value);
+    v.style.color = color;
+    top.appendChild(v);
+    g.appendChild(top);
+    var track = el('div', 'track'), fill = el('div', 'fill');
+    fill.style.width = Math.min(100, Math.max(pct > 0 ? 3 : 0, pct)) + '%';
+    fill.style.background = color;
+    track.appendChild(fill);
+    g.appendChild(track);
+    g.appendChild(el('div', 's', sub));
+    return g;
+  }
+  function limits(d) {
+    var box = $('gauges'), warn = [];
+    box.textContent = '';
+    d.quota.forEach(function (q) {
+      var color = q.left <= 10 ? DANGER : (q.left <= 25 ? WARN : ACCENT);
+      box.appendChild(gauge(q.name, '剩 ' + Math.round(q.left) + '%',
+        '已用 ' + Math.round(q.used) + '% · ' + (q.resets_at ? short(q.resets_at) + ' 重置' : '已重置'), q.used, color));
+      if (q.left <= 10 && q.resets_at) warn.push(q.name + '额度仅剩 ' + Math.round(q.left) + '%');
+    });
+    d.budget.forEach(function (b) {
+      var color = b.pct >= 100 ? DANGER : (b.pct >= 80 ? WARN : ACCENT);
+      box.appendChild(gauge(b.name, cny(b.spent), '上限 ¥' + b.limit + ' · 已用 ' + Math.round(b.pct) + '%', b.pct, color));
+      if (b.pct >= 100) warn.push(b.name + '已超出（' + cny(b.spent) + ' / ¥' + b.limit + '）');
+    });
+    var w = $('limitWarn');
+    w.textContent = warn.join('；');
+    w.style.display = warn.length ? 'block' : 'none';
+  }
+
+  var pickedDay = -1;
+  function dayInfo(d, i) {
+    var day = d.daily[i];
+    var text = day.date.slice(5) + ' · ' + usd(day.usd) + '（约 ' + cny(day.usd * d.fx) + '）· 输出 ' + compact(day.output) + ' · ' + day.count.toLocaleString('en-US') + ' 次';
+    if (state.app === 'all') {
+      var parts = APPS.filter(function (a) { return (day.apps[a] || 0) > 0; })
+        .map(function (a) { return NAMES[a] + ' ' + usd(day.apps[a]); });
+      if (parts.length > 1) text += ' · ' + parts.join('，');
+    }
+    $('dailyInfo').textContent = text;
+  }
+  function daily(d) {
+    var box = $('daily');
+    box.textContent = '';
+    var days = d.daily, total = 0;
+    days.forEach(function (x) { total += x.usd; });
+    $('dailySub').textContent = '近 ' + days.length + ' 天 · 合计 ' + usd(total);
+    if (!total) { box.appendChild(el('div', 'empty', '近 ' + days.length + ' 天暂无折算额度')); $('dailyInfo').textContent = ''; return; }
+    var W = 340, H = 120, L = 34, T = 6, R = 2, B = 16, ns = 'http://www.w3.org/2000/svg';
+    var max = niceMax(Math.max.apply(null, days.map(function (x) { return x.usd; })) * 1.05, 2);
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('class', 'daily');
+    function add(tag, attrs, text) {
+      var n = document.createElementNS(ns, tag);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (text !== undefined) n.textContent = text;
+      svg.appendChild(n);
+      return n;
+    }
+    var pw = W - L - R, ph = H - T - B, slot = pw / days.length, bw = Math.max(2, slot * 0.62);
+    for (var i = 0; i < 3; i++) {
+      var y = T + ph * i / 2;
+      add('line', { x1: L, x2: W - R, y1: y, y2: y, stroke: i === 2 ? AXIS : GRID });
+      add('text', { x: L - 4, y: y + 3.5, fill: INK3, 'font-size': 9, 'text-anchor': 'end' }, tickUsd(max * (1 - i / 2)));
+    }
+    if (pickedDay < 0 || pickedDay >= days.length) pickedDay = days.length - 1;
+    days.forEach(function (day, i) {
+      var x = L + slot * i + (slot - bw) / 2, base = T + ph;
+      var segs = state.app === 'all'
+        ? APPS.map(function (a) { return [COLORS[a], day.apps[a] || 0]; })
+        : [[COLORS[state.app], day.usd]];
+      segs.forEach(function (s) {
+        if (s[1] <= 0) return;
+        var h = Math.max(1, ph * s[1] / max);
+        add('rect', { x: x, y: base - h, width: bw, height: h, fill: s[0], 'fill-opacity': i === pickedDay ? 1 : 0.6 });
+        base -= h;
+      });
+      // Full-height transparent hit area so small bars are easy to tap.
+      var hit = add('rect', { x: L + slot * i, y: T, width: slot, height: ph, fill: 'transparent' });
+      hit.addEventListener('click', function () { pickedDay = i; daily(d); });
+    });
+    for (var j = days.length - 1; j >= 0; j -= 7) {
+      var lastLabel = j === days.length - 1;
+      add('text', { x: lastLabel ? W - R : L + slot * (j + 0.5), y: H - 3, fill: INK3, 'font-size': 9,
+        'text-anchor': lastLabel ? 'end' : 'middle' }, days[j].date.slice(5));
+    }
+    box.appendChild(svg);
+    dayInfo(d, pickedDay);
+  }
+
+  function projects(d) {
+    var box = $('projects');
+    box.textContent = '';
+    if (!d.projects.length) { box.appendChild(el('div', 'empty', '暂无记录')); return; }
+    var top = Math.max.apply(null, d.projects.map(function (s) { return s.output; }).concat([1]));
+    d.projects.forEach(function (s, i) {
+      var row = el('div', 'bar'), head = el('div', 'row');
+      head.appendChild(el('span', 'name', s.name));
+      head.appendChild(el('span', 'val', usd(s.usd) + ' · ' + compact(s.output)));
+      row.appendChild(head);
+      var track = el('div', 'track'), fill = el('div', 'fill');
+      fill.style.width = (s.output ? Math.max(2, 100 * s.output / top) : 0) + '%';
+      fill.style.background = series(i);
+      track.appendChild(fill);
+      row.appendChild(track);
+      box.appendChild(row);
+    });
+  }
+
+  function render(d) {
+    var lastTrend = d.trend[d.trend.length - 1];
+    $('recent').textContent = d.recent_speed == null ? '—' : d.recent_speed.toFixed(1);
+    $('recentSub').textContent = lastTrend ? NAMES[lastTrend.app] + (lastTrend.model ? ' · ' + lastTrend.model : '') : '缺少单次耗时记录';
+    $('avg').textContent = d.avg_speed == null ? '—' : d.avg_speed.toFixed(1);
+    $('avgSub').textContent = d.timed.toLocaleString('en-US') + ' / ' + d.count.toLocaleString('en-US') + ' 次含耗时';
+    $('out').textContent = d.count ? compact(d.output) : '—';
+    $('outSub').textContent = '思考 ' + compact(d.reasoning);
+    $('in').textContent = d.count ? compact(d.input) : '—';
+    $('inSub').textContent = '缓存读取 ' + compact(d.cached);
+    $('usd').textContent = d.count ? usd(d.usd) : '—';
+    $('usdSub').textContent = d.count ? '约 ' + cny(d.cny) + (d.saved_usd >= 0.01 ? ' · 缓存省 ' + usd(d.saved_usd) : '') : '等待用量记录';
+    limits(d); trend(d); daily(d); split(d); projects(d); list(d);
+  }
+
+  function status() {
+    var s = $('sync'), age = Date.now() - lastOk;
+    s.className = 'sync' + (lastOk && age > 20000 ? ' stale' : '');
+    s.lastChild.textContent = !lastOk ? '连接中…' : (age > 20000 ? '电脑可能已离线' : '同步于 ' + time(lastOk / 1000).slice(6));
+  }
+  function alertMsg(text) {
+    var a = $('alert');
+    a.textContent = text || '';
+    a.style.display = text ? 'block' : 'none';
+  }
+
+  // A filter tap always fetches at once (force); only the newest request may render, so a
+  // slow earlier response can never overwrite the current filter. Background polls send the
+  // last ETag and skip re-rendering on 304, which keeps scrolling smooth while idle.
+  var etag = '', seq = 0;
+  function load(force) {
+    if (!force && (inflight || document.hidden)) return;
+    var my = ++seq, next = '';
+    inflight = true;
+    if (force) document.body.classList.add('loading');
+    var url = '/api/summary?app=' + encodeURIComponent(state.app) + '&period=' + encodeURIComponent(state.period);
+    var headers = { Authorization: 'Bearer ' + KEY };
+    if (etag && !force) headers['If-None-Match'] = etag;
+    fetch(url, { headers: headers, cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 401) throw new Error('auth');
+        if (r.status === 304) return null;
+        if (!r.ok) throw new Error('http');
+        next = r.headers.get('ETag') || '';
+        return r.json();
+      })
+      .then(function (d) {
+        if (my !== seq) return;
+        lastOk = Date.now();
+        alertMsg('');
+        if (d) { etag = next; render(d); }
+      })
+      .catch(function (e) {
+        if (my !== seq) return;
+        alertMsg(e.message === 'auth' ? '访问密钥已失效，请在电脑上的「手机查看」中重新扫码。' : '');
+      })
+      .then(function () {
+        if (my !== seq) return;
+        inflight = false;
+        document.body.classList.remove('loading');
+        status();
+      });
+  }
+
+  buildChips();
+  markPeriods();
+  load(true);
+  timer = setInterval(function () { load(false); }, 5000);
+  setInterval(status, 1000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(false); });
+})();
+</script>
+</body>
+</html>

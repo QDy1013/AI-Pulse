@@ -1,1 +1,2 @@
 PySide6-Essentials==6.12.0
+segno==1.6.6
