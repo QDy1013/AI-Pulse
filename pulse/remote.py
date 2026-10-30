@@ -35,12 +35,12 @@ RECENT_LIMIT = 30
 QUICK_URL = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
 
 ICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">'
-        '<rect x="6" y="6" width="116" height="116" rx="28" fill="#0f221b" stroke="#2a5242" stroke-width="3"/>'
-        '<path d="M22 67H43L54 34L73 93L85 57H106" fill="none" stroke="#6fdcaa" stroke-width="7.5" '
+        '<rect x="6" y="6" width="116" height="116" rx="28" fill="#1b1e24" stroke="#3b3f48" stroke-width="3"/>'
+        '<path d="M22 67H43L54 34L73 93L85 57H106" fill="none" stroke="#f6f6f3" stroke-width="7.5" '
         'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 MANIFEST = json.dumps({
     'name': 'AI Pulse', 'short_name': 'AI Pulse', 'start_url': '/', 'display': 'standalone',
-    'background_color': '#0b0c0e', 'theme_color': '#0b0c0e',
+    'background_color': '#f3f3f0', 'theme_color': '#f9f9f7',
     'icons': [{'src': '/icon.svg', 'sizes': 'any', 'type': 'image/svg+xml'}],
 })
 
@@ -210,8 +210,8 @@ class Handler(BaseHTTPRequestHandler):
 
 LOCKED = '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Pulse</title></head>
-<body style="background:#0b0c0e;color:#eceef1;font-family:system-ui,sans-serif;padding:40px 20px;text-align:center">
-<h2>需要访问密钥</h2><p style="color:#767c86">请在电脑上的 AI Pulse「手机查看」中重新扫码或复制链接。</p></body></html>'''
+<body style="background:#f3f3f0;color:#16181d;font-family:system-ui,sans-serif;padding:40px 20px;text-align:center">
+<h2>需要访问密钥</h2><p style="color:#737882">请在电脑上的 AI Pulse「手机查看」中重新扫码或复制链接。</p></body></html>'''
 
 
 class Tunnel:

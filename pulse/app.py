@@ -11,9 +11,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QThread, Signal, QPointF, QRectF, QSize
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QThread, Signal, QPoint, QPointF, QRectF, QSize, QSizeF
 from PySide6.QtGui import (
-    QColor, QFont, QFontDatabase, QPainter, QPainterPath, QPen,
+    QBrush, QColor, QFont, QFontDatabase, QPainter, QPainterPath, QPen,
     QLinearGradient, QRadialGradient, QIcon, QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -31,13 +31,19 @@ from .pricing import (
 )
 from .remote import RemoteService, find_cloudflared, new_token
 
-# Graphite surfaces, a single emerald accent and amber reserved for money.
-BG, SIDEBAR, PANEL, RAISED = '#0b0c0e', '#0e0f12', '#141619', '#191c20'
-BORDER, LINE, GRID, TRACK = '#23262b', '#2f333a', '#1d2025', '#202328'
-TEXT, SECONDARY, MUTED = '#eceef1', '#a6abb4', '#767c86'
-ACCENT, GOLD, WARN, DANGER = '#6fdcaa', '#e7bd6c', '#f2b443', '#ee6b6b'
-# App hues are a validated categorical set (adjacent-pair CVD ΔE ≥ 8 on the panel
-# surface) in this fixed order; models and projects reuse the same order, never cycled.
+# Paper and ink: white glass panels on a warm off-white page ruled with fine lines.
+# The accent is ink itself; amber is reserved for money, red and orange for limits.
+BG, SIDEBAR, PANEL, RAISED = '#f3f3f0', '#f9f9f7', '#ffffff', '#ffffff'
+# Grid and track are ink at low alpha (#AARRGGBB) so they sit evenly on paper and glass.
+BORDER, LINE, GRID, TRACK = '#e3e3de', '#cfd0cb', '#1411141c', '#1711141c'
+TEXT, SECONDARY, MUTED = '#16181d', '#4a4f58', '#737882'
+ACCENT, GOLD, WARN, DANGER = '#1d2026', '#a26f16', '#c47a06', '#cf3f37'
+INK = (17, 20, 28)
+# Type: CJK sans for reading, a serif for titles, DIN-style figures for numbers.
+# configure_fonts() falls back when a family is not installed.
+SANS, SERIF, NUM, LATIN = 'Microsoft YaHei UI', 'Noto Serif SC', 'Bahnschrift', 'Segoe UI Variable Text'
+# App hues are a validated categorical set (adjacent-pair CVD ΔE ≥ 8 and ≥ 3:1 contrast on
+# white) in this fixed order; models and projects reuse the same order, never cycled.
 COLORS = {
     'Codex': '#199e70',
     'Claude': '#d95926',
@@ -45,7 +51,7 @@ COLORS = {
     'Antigravity': '#d55181',
     'WorkBuddy': '#3987e5',
 }
-OTHER = '#5d636d'
+OTHER = '#9a9ea6'
 DISPLAY = {
     'Codex': 'Codex',
     'Claude': 'Claude Code',
@@ -63,57 +69,62 @@ ALL = '全部软件'
 PERIODS = ('今天', '近 7 天', '全部记录')
 TABLE_LIMIT = 100
 
-STYLE = f'''
-QWidget {{ color: {TEXT}; font-family: "Microsoft YaHei UI"; font-size: 13px; }}
-QMainWindow, QDialog, QWidget#root, QWidget#content, QWidget#viewport {{ background: {BG}; }}
+def ink_css(alpha):
+    return f'rgba({INK[0]}, {INK[1]}, {INK[2]}, {alpha})'
+
+
+def stylesheet():
+    # Built after configure_fonts() so the families fall back to what is installed.
+    return f'''
+QWidget {{ color: {TEXT}; font-family: "{SANS}"; font-size: 13px; }}
+QMainWindow, QDialog, QWidget#root, QWidget#viewport {{ background: {BG}; }}
 QLabel {{ background: transparent; border: none; }}
 QFrame#sidebar {{ background: {SIDEBAR}; border-right: 1px solid {BORDER}; }}
-QFrame#panel, QFrame#metric {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {RAISED}, stop:1 {PANEL}); border: 1px solid {BORDER}; border-radius: 12px; }}
-QFrame#metric[primary="true"] {{ border-color: #24392f; }}
-QFrame#metric[quota="true"] {{ border-color: #3a3122; }}
 QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
-QLabel#eyebrow {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 2.4px; }}
-QLabel#heading {{ font-size: 26px; font-weight: 700; color: {TEXT}; letter-spacing: 0.5px; }}
-QLabel#section {{ font-size: 14px; font-weight: 600; color: {TEXT}; }}
-QLabel#unit {{ color: {MUTED}; background: transparent; border: 1px solid {LINE}; border-radius: 6px; padding: 1px 6px; font-family: "Segoe UI"; font-size: 10px; font-weight: 600; letter-spacing: 0.4px; }}
-QLabel#unit[primary="true"] {{ color: {ACCENT}; border-color: #24453a; }}
-QLabel#unit[quota="true"] {{ color: {GOLD}; border-color: #4a3c22; }}
-QLabel#number {{ font-family: "Segoe UI"; font-size: 30px; font-weight: 600; letter-spacing: -0.5px; color: {TEXT}; }}
-QPushButton {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 7px 15px; font-weight: 500; color: {SECONDARY}; }}
-QPushButton:hover {{ background: {RAISED}; border-color: {LINE}; color: {TEXT}; }}
-QPushButton:pressed {{ background: #20242a; }}
-QPushButton:disabled {{ color: #4f545c; }}
-QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 9px; padding: 9px 12px; color: {SECONDARY}; font-weight: 500; }}
-QPushButton#nav:hover {{ background: #141619; color: {TEXT}; }}
-QPushButton#nav:checked {{ background: #171a1e; border-color: {BORDER}; color: {TEXT}; font-weight: 600; }}
-QPushButton#period {{ background: transparent; border: none; border-radius: 7px; color: {MUTED}; padding: 6px 14px; font-weight: 500; }}
+QLabel#eyebrow {{ color: {MUTED}; font-family: "{LATIN}"; font-size: 10px; font-weight: 600; letter-spacing: 3px; }}
+QLabel#heading {{ font-family: "{SERIF}"; font-size: 28px; font-weight: 600; color: {TEXT}; letter-spacing: 1.5px; }}
+QLabel#section {{ font-family: "{SERIF}"; font-size: 15px; font-weight: 600; color: {TEXT}; letter-spacing: 0.6px; }}
+QLabel#figure {{ font-family: "{NUM}"; font-size: 17px; font-weight: 400; color: {TEXT}; }}
+QLabel#unit {{ color: {MUTED}; background: transparent; border: 1px solid {ink_css(0.12)}; border-radius: 7px; padding: 1px 7px; font-family: "{LATIN}"; font-size: 10px; font-weight: 600; letter-spacing: 0.6px; }}
+QLabel#unit[primary="true"] {{ color: {PANEL}; background: {ACCENT}; border-color: {ACCENT}; }}
+QLabel#unit[quota="true"] {{ color: {GOLD}; background: rgba(162, 111, 22, 0.07); border-color: rgba(162, 111, 22, 0.30); }}
+QLabel#number {{ font-family: "{NUM}"; font-size: 34px; font-weight: 400; color: {TEXT}; }}
+QPushButton {{ background: rgba(255, 255, 255, 0.82); border: 1px solid {ink_css(0.10)}; border-bottom-color: {ink_css(0.16)}; border-radius: 10px; padding: 7px 15px; font-weight: 500; color: {SECONDARY}; }}
+QPushButton:hover {{ background: {PANEL}; border-color: {ink_css(0.18)}; color: {TEXT}; }}
+QPushButton:pressed {{ background: {ink_css(0.04)}; }}
+QPushButton:disabled {{ color: #b0b3b9; }}
+QPushButton#nav {{ text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 9px 12px; color: {SECONDARY}; font-weight: 500; }}
+QPushButton#nav:hover {{ background: {ink_css(0.035)}; color: {TEXT}; }}
+QPushButton#nav:checked {{ background: {PANEL}; border-color: {ink_css(0.09)}; border-bottom-color: {ink_css(0.15)}; color: {TEXT}; font-weight: 600; }}
+QPushButton#period {{ background: transparent; border: 1px solid transparent; border-radius: 9px; color: {MUTED}; padding: 6px 14px; font-weight: 500; }}
 QPushButton#period:hover {{ color: {TEXT}; }}
-QPushButton#period:checked {{ background: #22262c; color: {TEXT}; font-weight: 600; }}
-QFrame#segments {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 10px; }}
-QTableWidget {{ background: transparent; alternate-background-color: #16181c; border: none; gridline-color: {GRID}; selection-background-color: #1a2a23; selection-color: {TEXT}; outline: none; }}
-QHeaderView {{ background: {PANEL}; border: none; }}
-QHeaderView::section {{ background: {PANEL}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER}; padding: 10px 12px; font-size: 12px; font-weight: 600; }}
-QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid {GRID}; }}
+QPushButton#period:checked {{ background: {PANEL}; border-color: {ink_css(0.09)}; border-bottom-color: {ink_css(0.16)}; color: {TEXT}; font-weight: 600; }}
+QFrame#segments {{ background: {ink_css(0.035)}; border: 1px solid {ink_css(0.06)}; border-radius: 13px; }}
+QTableWidget {{ background: transparent; alternate-background-color: {ink_css(0.018)}; border: none; gridline-color: {ink_css(0.05)}; selection-background-color: {ink_css(0.06)}; selection-color: {TEXT}; outline: none; }}
+QHeaderView {{ background: transparent; border: none; }}
+QHeaderView::section {{ background: transparent; color: {MUTED}; border: none; border-bottom: 1px solid {ink_css(0.10)}; padding: 10px 12px; font-size: 12px; font-weight: 600; }}
+QTableWidget::item {{ padding: 8px 12px; border-bottom: 1px solid {ink_css(0.05)}; }}
+QTableCornerButton::section {{ background: transparent; border: none; }}
 QScrollArea {{ border: none; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 0; }}
-QScrollBar::handle:vertical {{ background: #2a2e34; border-radius: 4px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: #3a3f46; }}
+QScrollBar::handle:vertical {{ background: {ink_css(0.16)}; border-radius: 4px; min-height: 30px; }}
+QScrollBar::handle:vertical:hover {{ background: {ink_css(0.28)}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QScrollBar:horizontal {{ height: 8px; background: transparent; }}
-QScrollBar::handle:horizontal {{ background: #2a2e34; border-radius: 4px; min-width: 30px; }}
-QTextEdit, QLineEdit {{ background: {BG}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px; selection-background-color: #1f4436; }}
-QTextEdit:focus, QLineEdit:focus {{ border-color: #2f5a48; }}
+QScrollBar::handle:horizontal {{ background: {ink_css(0.16)}; border-radius: 4px; min-width: 30px; }}
+QTextEdit, QLineEdit {{ background: {PANEL}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px; selection-background-color: {ink_css(0.14)}; }}
+QTextEdit:focus, QLineEdit:focus {{ border-color: {ink_css(0.35)}; }}
 QComboBox {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 8px; }}
 QCheckBox {{ spacing: 9px; }}
 QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: 10px; padding: 10px; background: {PANEL}; }}
 QTabBar::tab {{ background: transparent; padding: 9px 14px; color: {MUTED}; border-bottom: 2px solid transparent; margin-right: 4px; }}
 QTabBar::tab:hover {{ color: {TEXT}; }}
 QTabBar::tab:selected {{ color: {TEXT}; border-bottom-color: {ACCENT}; font-weight: 600; }}
-QToolTip {{ color: {TEXT}; background: #1b1e23; border: 1px solid {LINE}; border-radius: 6px; padding: 8px; }}
-QMenu {{ background: #16191d; border: 1px solid {LINE}; border-radius: 8px; padding: 4px; }}
+QToolTip {{ color: {TEXT}; background: {PANEL}; border: 1px solid {BORDER}; border-radius: 6px; padding: 8px; }}
+QMenu {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 7px 22px; border-radius: 6px; }}
-QMenu::item:selected {{ background: #20242a; color: {TEXT}; }}
+QMenu::item:selected {{ background: {ink_css(0.06)}; color: {TEXT}; }}
 QMenu::separator {{ height: 1px; background: {BORDER}; margin: 4px 8px; }}
 '''
 
@@ -121,7 +132,7 @@ QMenu::separator {{ height: 1px; background: {BORDER}; margin: 4px 8px; }}
 # --------------------------------------------------------------------------- helpers
 
 def apply_dark_frame(window):
-    """Override Windows 11 accent-colored titlebar and outer frame with neutral dark gray."""
+    """Override Windows 11 accent-colored titlebar and outer frame with the paper tones."""
     if sys.platform != 'win32' or QApplication.platformName() == 'offscreen':
         return
     if not isinstance(window, (QMainWindow, QDialog)):
@@ -132,10 +143,10 @@ def apply_dark_frame(window):
             return
         dwm = ctypes.windll.dwmapi
         for attr, val in (
-            (20, ctypes.c_int(1)),              # DWMWA_USE_IMMERSIVE_DARK_MODE
-            (34, ctypes.c_uint32(0x002B2623)),  # DWMWA_BORDER_COLOR (#23262b, COLORREF is BGR)
-            (35, ctypes.c_uint32(0x00120F0E)),  # DWMWA_CAPTION_COLOR (#0e0f12)
-            (36, ctypes.c_uint32(0x00F1EEEC)),  # DWMWA_TEXT_COLOR (#eceef1)
+            (20, ctypes.c_int(0)),              # DWMWA_USE_IMMERSIVE_DARK_MODE off
+            (34, ctypes.c_uint32(0x00DEE3E3)),  # DWMWA_BORDER_COLOR (#e3e3de, COLORREF is BGR)
+            (35, ctypes.c_uint32(0x00F7F9F9)),  # DWMWA_CAPTION_COLOR (#f9f9f7)
+            (36, ctypes.c_uint32(0x001D1816)),  # DWMWA_TEXT_COLOR (#16181d)
         ):
             dwm.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), attr, ctypes.byref(val), ctypes.sizeof(val))
     except Exception:
@@ -169,7 +180,7 @@ def button(text, fn=None, name=''):
 
 
 def panel():
-    frame = QFrame()
+    frame = Glass()
     frame.setObjectName('panel')
     return frame
 
@@ -268,15 +279,15 @@ def app_icon():
     p = QPainter(image)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     grad = QLinearGradient(0, 0, 128, 128)
-    grad.setColorAt(0, QColor('#17342a'))
-    grad.setColorAt(1, QColor('#0d1a15'))
+    grad.setColorAt(0, QColor('#2b2f37'))
+    grad.setColorAt(1, QColor('#111318'))
     p.setBrush(grad)
-    p.setPen(QPen(QColor('#2a5242'), 3))
+    p.setPen(QPen(QColor('#3b3f48'), 3))
     p.drawRoundedRect(QRectF(6, 6, 116, 116), 28, 28)
     path = QPainterPath(QPointF(22, 67))
     for x, y in [(43, 67), (54, 34), (73, 93), (85, 57), (106, 57)]:
         path.lineTo(x, y)
-    p.setPen(QPen(QColor(ACCENT), 7.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setPen(QPen(QColor('#f6f6f3'), 7.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
     p.drawPath(path)
     p.end()
     return QIcon(image)
@@ -311,10 +322,21 @@ def nav_dot_icon(color_hex, overview=False):
 def configure_fonts():
     # Windows' offscreen platform can omit system font discovery; register the
     # installed fonts directly when needed. Font files are never redistributed.
-    directory = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'Fonts'
-    for file in ['msyh.ttc', 'msyhbd.ttc', 'segoeui.ttf', 'segoeuib.ttf']:
-        if (directory / file).exists():
-            QFontDatabase.addApplicationFont(str(directory / file))
+    global SERIF, NUM, LATIN
+    directories = [Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'Fonts',
+                   Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Microsoft/Windows/Fonts']
+    families = set(QFontDatabase.families())
+    if SANS not in families:
+        for directory in directories:
+            for file in ['msyh.ttc', 'msyhbd.ttc', 'segoeui.ttf', 'segoeuib.ttf', 'SegUIVar.ttf',
+                         'bahnschrift.ttf', 'NotoSerifSC-VF.ttf']:
+                if (directory / file).exists():
+                    QFontDatabase.addApplicationFont(str(directory / file))
+        families = set(QFontDatabase.families())
+    # Optional display faces: fall back to what every Windows install has.
+    SERIF = next((f for f in ('Noto Serif SC', 'Source Han Serif SC', 'Source Han Serif CN') if f in families), SANS)
+    NUM = 'Bahnschrift' if 'Bahnschrift' in families else 'Segoe UI'
+    LATIN = next((f for f in ('Segoe UI Variable Text', 'Segoe UI') if f in families), SANS)
 
 
 def qr_pixmap(text, size):
@@ -363,7 +385,182 @@ def painter(widget, family, size):
     return p
 
 
+def ink(alpha):
+    return QColor(*INK, alpha)
+
+
+def white(alpha):
+    return QColor(255, 255, 255, alpha)
+
+
 # --------------------------------------------------------------------------- widgets
+
+class Glass(QFrame):
+    """Frosted white glass: the ruled page shows faintly through, with a bright top edge."""
+    RADIUS = 14.0
+    FILL = QColor(255, 255, 255, 214)
+
+    def __init__(self, tint=None):
+        super().__init__()
+        self.tint = tint
+        self.hovered = False
+        self.cache, self.cache_key = None, None
+
+    def enterEvent(self, event):
+        self.hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        # The surface only changes with size and hover, so it is drawn once into a pixmap.
+        dpr = self.devicePixelRatioF()
+        key = (self.width(), self.height(), dpr, self.hovered)
+        if key != self.cache_key:
+            pix = QPixmap(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)))
+            pix.setDevicePixelRatio(dpr)
+            pix.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pix)
+            self.paint_surface(p)
+            p.end()
+            self.cache, self.cache_key = pix, key
+        p = QPainter(self)
+        p.drawPixmap(0, 0, self.cache)
+        p.end()
+
+    def paint_surface(self, p):
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        shape = QPainterPath()
+        shape.addRoundedRect(r, self.RADIUS, self.RADIUS)
+        p.fillPath(shape, white(232) if self.hovered else self.FILL)
+        sheen = QLinearGradient(0, r.top(), 0, r.bottom())
+        sheen.setColorAt(0, white(150))
+        sheen.setColorAt(0.4, white(0))
+        p.fillPath(shape, sheen)
+        if self.tint:
+            glow = QRadialGradient(QPointF(r.center().x(), r.top()), max(60.0, r.width() * 0.6))
+            c = QColor(self.tint)
+            c.setAlpha(22)
+            glow.setColorAt(0, c)
+            c.setAlpha(0)
+            glow.setColorAt(1, c)
+            p.fillPath(shape, glow)
+
+        # Hairline rim, a touch darker toward the bottom where the glass meets its shadow.
+        lift = 8 if self.hovered else 0
+        rim = QLinearGradient(0, r.top(), 0, r.bottom())
+        rim.setColorAt(0, ink(15 + lift))
+        rim.setColorAt(1, ink(26 + lift))
+        p.setPen(QPen(QBrush(rim), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(shape)
+        # Inner edge: the thickness of the glass, a pure white line along the top.
+        inner = r.adjusted(1, 1, -1, -1)
+        edge = QLinearGradient(0, inner.top(), 0, inner.bottom())
+        edge.setColorAt(0, white(255))
+        edge.setColorAt(min(0.4, 22 / max(1.0, inner.height())), white(0))
+        p.setPen(QPen(QBrush(edge), 1))
+        p.drawRoundedRect(inner, self.RADIUS - 1, self.RADIUS - 1)
+
+
+class Backdrop(QWidget):
+    """Scrolling page surface: paper ruled with a fine grid, with glass panel shadows."""
+    # (x, y, radius) as fractions of the page size, color and peak alpha: faint daylight washes.
+    GLOWS = (
+        (0.0, 0.0, 0.7, '#dfe4f2', 200),
+        (1.0, 1.0, 0.6, '#f1e7da', 170),
+    )
+    CELL, MAJOR = 24, 4  # Minor rule spacing in px; every MAJOR-th rule is stronger.
+
+    def __init__(self):
+        super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.cache, self.cache_key, self.panels = None, None, []
+        # Rebuild the backdrop once a resize settles; until then the old one is stretched.
+        self.rebuild = QTimer(self, singleShot=True, interval=120)
+        self.rebuild.timeout.connect(lambda: (setattr(self, 'cache', None), self.update()))
+
+    def track_panels(self):
+        self.panels = self.findChildren(Glass)
+        for g in self.panels:
+            g.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        # Shadows sit outside each panel, so redraw when a panel moves, resizes or toggles.
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.Hide):
+            self.update()
+        return False
+
+    def key(self):
+        # Page size plus where each visible panel sits: the shadows are baked into the cache.
+        rects = tuple(QRectF(QPointF(g.mapTo(self, QPoint(0, 0))), QSizeF(g.size()))
+                      for g in self.panels if g.isVisibleTo(self))
+        return self.width(), self.height(), self.devicePixelRatioF(), rects
+
+    def render_base(self, key):
+        w, h, dpr, rects = key
+        pix = QPixmap(max(1, round(w * dpr)), max(1, round(h * dpr)))
+        pix.setDevicePixelRatio(dpr)
+        pix.fill(QColor(BG))
+        p = QPainter(pix)
+        p.setPen(Qt.PenStyle.NoPen)
+        page = QRectF(0, 0, w, h)
+        for x, y, radius, color, alpha in self.GLOWS:
+            glow = QRadialGradient(QPointF(w * x, h * y), max(200.0, w * radius))
+            c = QColor(color)
+            for stop, k in ((0, 1), (0.45, 0.5), (1, 0)):
+                c.setAlpha(round(alpha * k))
+                glow.setColorAt(stop, c)
+            p.fillRect(page, glow)
+        # The ruling: hairlines on a fixed grid, crisp at any scale factor.
+        step = self.CELL
+        for i in range(int(w // step) + 1):
+            p.fillRect(QRectF(i * step, 0, 1 / dpr, h), ink(18 if i % self.MAJOR == 0 else 9))
+        for i in range(int(h // step) + 1):
+            p.fillRect(QRectF(0, i * step, w, 1 / dpr), ink(18 if i % self.MAJOR == 0 else 9))
+        # Let the ruling fade out down the page so it frames the header and stays quiet below.
+        fade = QLinearGradient(0, 0, 0, min(h, 900))
+        paper = QColor(BG)
+        paper.setAlpha(0)
+        fade.setColorAt(0, paper)
+        paper.setAlpha(190)
+        fade.setColorAt(1, paper)
+        p.fillRect(page, fade)
+        if rects:
+            # Soft layered shadow below each panel, kept off the glass itself so it stays clean.
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            holes = QPainterPath()
+            for rect in rects:
+                holes.addRoundedRect(rect, Glass.RADIUS, Glass.RADIUS)
+            outside = QPainterPath()
+            outside.addRect(page)
+            p.setClipPath(outside.subtracted(holes))
+            for rect in rects:
+                for spread, alpha, dy in ((18, 3, 12), (11, 5, 8), (6, 7, 4), (2, 9, 1)):
+                    p.setBrush(QColor(20, 26, 40, alpha))
+                    p.drawRoundedRect(rect.adjusted(-spread, -spread + dy, spread, spread + dy),
+                                      Glass.RADIUS + spread, Glass.RADIUS + spread)
+        p.end()
+        self.cache, self.cache_key = pix, key
+
+    def paintEvent(self, event):
+        key = self.key()
+        if self.cache is None:
+            self.render_base(key)
+        elif key != self.cache_key and not self.rebuild.isActive():
+            # Resizing or a panel moved: stretch the old backdrop until the layout settles.
+            self.rebuild.start()
+        p = QPainter(self)
+        if self.cache_key[:3] == key[:3]:
+            p.drawPixmap(0, 0, self.cache)
+        else:
+            p.drawPixmap(self.rect(), self.cache)
+
 
 class ScanWorker(QThread):
     result = Signal(object)
@@ -380,9 +577,9 @@ class ScanWorker(QThread):
             self.error.emit(type(e).__name__)
 
 
-class Metric(QFrame):
+class Metric(Glass):
     def __init__(self, title, unit, primary=False, accent=ACCENT, quota=False):
-        super().__init__()
+        super().__init__(accent if quota else None)
         self.primary = primary
         self.quota = quota
         self.accent = accent
@@ -422,11 +619,13 @@ class Metric(QFrame):
         super().paintEvent(event)
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        top = QRectF(16, 1, self.width() - 32, 1.6)
+        top = QRectF(22, 0.6, self.width() - 44, 1.4)
         grad = QLinearGradient(top.topLeft(), top.topRight())
-        emph = self.primary or self.quota
+        # Only money gets the amber rule; the speed card is marked by its inked badge.
+        if not self.quota:
+            return
         c = QColor(self.accent)
-        c.setAlpha(200 if emph else 60)
+        c.setAlpha(200)
         fade = QColor(self.accent)
         fade.setAlpha(0)
         grad.setColorAt(0, fade)
@@ -467,7 +666,7 @@ class SpeedChart(QWidget):
         return QPointF(x, y)
 
     def paintEvent(self, event):
-        p = painter(self, 'Segoe UI', 11)
+        p = painter(self, NUM, 11)
         rect = self.plot_rect()
         raw_max = max((r.speed for r in self.rows), default=0)
         maximum = nice_max(raw_max * 1.08) if raw_max > 0 else 60.0
@@ -487,10 +686,10 @@ class SpeedChart(QWidget):
 
         if not self.rows:
             badge = QRectF(rect.center().x() - 135, rect.center().y() - 18, 270, 36)
-            p.setPen(QPen(QColor(BORDER), 1))
-            p.setBrush(QColor(BG))
+            p.setPen(QPen(ink(22), 1))
+            p.setBrush(ink(8))
             p.drawRoundedRect(badge, 10, 10)
-            f = QFont('Microsoft YaHei UI')
+            f = QFont(SANS)
             f.setPixelSize(12)
             p.setFont(f)
             p.setPen(QColor(MUTED))
@@ -614,7 +813,7 @@ class Breakdown(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        p = painter(self, 'Microsoft YaHei UI', 12)
+        p = painter(self, SANS, 12)
         values = [val for _, val, _, _ in self.items]
         highest = max(values + [1])
         slots = max(len(APPS), len(self.items))
@@ -628,7 +827,7 @@ class Breakdown(QWidget):
 
             # Colored indicator dot + name.
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(color if active else QColor('#3a3f46'))
+            p.setBrush(color if active else ink(40))
             p.drawEllipse(QPointF(5, y + 10), 3.5, 3.5)
 
             right_text = f'{format_usd(usd)} · {compact(total)}' if active else '0'
@@ -684,7 +883,7 @@ def level_color(pct, normal=ACCENT):
     return DANGER if pct >= 100 else (WARN if pct >= insights.WARN_PERCENT else normal)
 
 
-class Gauge(QFrame):
+class Gauge(Glass):
     """Compact limit card: value, usage bar and reset / limit detail."""
 
     def __init__(self):
@@ -698,7 +897,7 @@ class Gauge(QFrame):
         self.title = label('', 'muted')
         head.addWidget(self.title)
         head.addStretch()
-        self.value = label('', 'section')
+        self.value = label('', 'figure')
         head.addWidget(self.value)
         box.addLayout(head)
         box.addSpacing(16)  # Room for the painted usage bar.
@@ -724,8 +923,19 @@ class Gauge(QFrame):
         p.setBrush(QColor(TRACK))
         p.drawRoundedRect(track, 2, 2)
         if self.pct > 0:
-            p.setBrush(QColor(self.color))
-            p.drawRoundedRect(QRectF(track.left(), track.top(), max(4.0, track.width() * min(self.pct, 100) / 100), 4), 2, 2)
+            fill = QRectF(track.left(), track.top(), max(4.0, track.width() * min(self.pct, 100) / 100), 4)
+            # A soft glow under the bar, then the bar brightening toward its end.
+            halo = QColor(self.color)
+            halo.setAlpha(40)
+            p.setBrush(halo)
+            p.drawRoundedRect(fill.adjusted(-1, -2, 1, 2), 4, 4)
+            grad = QLinearGradient(fill.topLeft(), fill.topRight())
+            start = QColor(self.color)
+            start.setAlpha(170)
+            grad.setColorAt(0, start)
+            grad.setColorAt(1, QColor(self.color).lighter(118))
+            p.setBrush(grad)
+            p.drawRoundedRect(fill, 2, 2)
 
 
 class DailyChart(QWidget):
@@ -753,9 +963,9 @@ class DailyChart(QWidget):
         return [(COLORS[a], day['apps'].get(a, 0.0)) for a in APPS]
 
     def paintEvent(self, event):
-        p = painter(self, 'Segoe UI', 11)
+        p = painter(self, NUM, 11)
         rect = self.plot_rect()
-        top = max((d['usd'] for d in self.days), default=0)
+        top =max((d['usd'] for d in self.days), default=0)
         maximum = nice_max(top * 1.05) if top > 0 else 1.0
         for i in range(4):
             y = rect.top() + rect.height() * i / 3
@@ -775,10 +985,10 @@ class DailyChart(QWidget):
             p.drawText(QRectF(x - 30, rect.bottom() + 8, 60, 18), Qt.AlignmentFlag.AlignCenter, self.days[i]['date'][5:])
         if top <= 0:
             badge = QRectF(rect.center().x() - 120, rect.center().y() - 18, 240, 36)
-            p.setPen(QPen(QColor(BORDER), 1))
-            p.setBrush(QColor(BG))
+            p.setPen(QPen(ink(22), 1))
+            p.setBrush(ink(8))
             p.drawRoundedRect(badge, 10, 10)
-            f = QFont('Microsoft YaHei UI')
+            f = QFont(SANS)
             f.setPixelSize(12)
             p.setFont(f)
             p.setPen(QColor(MUTED))
@@ -790,7 +1000,7 @@ class DailyChart(QWidget):
             x = rect.left() + slot * i + (slot - bar) / 2
             y = rect.bottom()
             if self.hover == i:
-                p.setBrush(QColor(255, 255, 255, 8))
+                p.setBrush(ink(9))
                 p.drawRoundedRect(QRectF(rect.left() + slot * i, rect.top(), slot, rect.height()), 4, 4)
             parts = [(c, v) for c, v in self.segments(day) if v > 0]
             for n, (color, value) in enumerate(parts):
@@ -860,7 +1070,7 @@ class Pulse(QMainWindow):
 
         self.setWindowTitle('AI Pulse · AI 用量工作台')
         self.setWindowIcon(app_icon())
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(stylesheet())
         self.setMinimumSize(980, 620)
         available = QApplication.primaryScreen().availableGeometry()
         self.resize(min(1380, available.width() - 50), min(880, available.height() - 60))
@@ -879,7 +1089,7 @@ class Pulse(QMainWindow):
         scroll.viewport().setObjectName('viewport')
         scroll.setWidgetResizable(True)
         layout.addWidget(scroll, 1)
-        self.content = QWidget()
+        self.content = Backdrop()
         self.content.setObjectName('content')
         scroll.setWidget(self.content)
         main = QVBoxLayout(self.content)
@@ -893,6 +1103,7 @@ class Pulse(QMainWindow):
         main.addLayout(self.build_history())
         main.addWidget(self.build_table(), 1)
         main.addLayout(self.build_footer())
+        self.content.track_panels()
 
         self.remote_signal = RemoteSignal(self)
         self.remote_signal.changed.connect(self.render_remote)
@@ -927,7 +1138,7 @@ class Pulse(QMainWindow):
         icon.setPixmap(app_icon().pixmap(32, 32))
         brand.addWidget(icon)
         logo = label('AI PULSE')
-        logo.setStyleSheet('font-family:"Segoe UI";font-size:19px;font-weight:700;letter-spacing:1.6px;color:{TEXT};')
+        logo.setStyleSheet(f'font-family:"{LATIN}";font-size:17px;font-weight:700;letter-spacing:3px;color:{TEXT};')
         brand.addWidget(logo)
         brand.addStretch()
         side.addLayout(brand)
