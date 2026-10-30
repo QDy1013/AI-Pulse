@@ -4,7 +4,10 @@ from __future__ import annotations
 DEFAULT_USD_TO_CNY = 7.15
 
 # (uncached_input_per_1m, cached_input_per_1m, output_per_1m, cache_write_per_1m) in USD.
-# Matched in order by case-insensitive substring against request.model.
+# cache_write is the 5-minute cache rate; 1-hour writes bill at ONE_HOUR_WRITE_MULTIPLIER x input.
+# Matched by case-insensitive substring against request.model; the longest match wins,
+# so specific entries (e.g. 'o3-mini') take precedence over family fallbacks ('o3').
+ONE_HOUR_WRITE_MULTIPLIER = 2.0
 DEFAULT_MODEL_RATES: tuple[tuple[str, tuple[float, float, float, float]], ...] = (
     # OpenAI / Codex
     ('gpt-6-astra', (10.0, 1.0, 50.0, 10.0)),
@@ -22,17 +25,26 @@ DEFAULT_MODEL_RATES: tuple[tuple[str, tuple[float, float, float, float]], ...] =
     ('gpt-4.1', (2.0, 0.50, 8.0, 2.0)),
     ('gpt-4o-mini', (0.15, 0.075, 0.60, 0.15)),
     ('gpt-4o', (2.50, 1.25, 10.0, 2.50)),
+    ('o3-pro', (20.0, 20.0, 80.0, 20.0)),
+    ('o3-mini', (1.10, 0.55, 4.40, 1.10)),
     ('o3', (2.0, 0.50, 8.0, 2.0)),
     ('o4-mini', (1.10, 0.275, 4.40, 1.10)),
     # Anthropic / Claude
-    ('claude-opus-5-5', (4.0, 0.20, 20.0, 8.0)),
-    ('claude opus 5.5', (4.0, 0.20, 20.0, 8.0)),
+    ('claude-opus-5-5', (4.0, 0.20, 20.0, 5.0)),
+    ('claude opus 5.5', (4.0, 0.20, 20.0, 5.0)),
+    ('claude-opus-4-6', (5.0, 0.50, 25.0, 6.25)),
+    ('claude-opus-4-5', (5.0, 0.50, 25.0, 6.25)),
+    ('claude-opus-4-1', (15.0, 1.50, 75.0, 18.75)),
+    ('claude-opus-4', (15.0, 1.50, 75.0, 18.75)),
+    ('claude-3-opus', (15.0, 1.50, 75.0, 18.75)),
     ('claude-opus', (5.0, 0.50, 25.0, 6.25)),
     ('claude opus', (5.0, 0.50, 25.0, 6.25)),
     ('claude-sonnet', (3.0, 0.30, 15.0, 3.75)),
     ('claude sonnet', (3.0, 0.30, 15.0, 3.75)),
     ('claude-haiku-5-5', (0.10, 0.01, 0.50, 0.125)),
     ('claude haiku 5.5', (0.10, 0.01, 0.50, 0.125)),
+    ('claude-haiku-4-5', (1.0, 0.10, 5.0, 1.25)),
+    ('claude-3-haiku', (0.25, 0.03, 1.25, 0.30)),
     ('claude-haiku', (0.80, 0.08, 4.0, 1.0)),
     ('claude haiku', (0.80, 0.08, 4.0, 1.0)),
     # Google / Gemini (Antigravity)
@@ -72,14 +84,16 @@ APP_FALLBACK_RATES: dict[str, tuple[float, float, float, float]] = {
 def resolve_rate(app: str, model: str, custom_rates: dict | None = None) -> tuple[float, float, float, float]:
     low = (model or '').lower()
     if custom_rates:
-        for pattern, triple in custom_rates.items():
-            if pattern.lower() in low and isinstance(triple, (list, tuple)) and len(triple) >= 3:
-                inp, cached, out = float(triple[0]), float(triple[1]), float(triple[2])
-                cw = float(triple[3]) if len(triple) >= 4 else inp
-                return (inp, cached, out, cw)
-    for pattern, rate in DEFAULT_MODEL_RATES:
-        if pattern in low:
-            return rate
+        matches = [(p, v) for p, v in custom_rates.items()
+                   if p.lower() in low and isinstance(v, (list, tuple)) and len(v) >= 3]
+        if matches:
+            _, triple = max(matches, key=lambda m: len(m[0]))
+            inp, cached, out = float(triple[0]), float(triple[1]), float(triple[2])
+            cw = float(triple[3]) if len(triple) >= 4 else inp
+            return (inp, cached, out, cw)
+    matches = [(p, rate) for p, rate in DEFAULT_MODEL_RATES if p in low]
+    if matches:
+        return max(matches, key=lambda m: len(m[0]))[1]
     return APP_FALLBACK_RATES.get(app, (1.0, 0.10, 5.0, 1.0))
 
 
@@ -108,7 +122,9 @@ def estimate_usd(req, custom_rates: dict | None = None) -> tuple[float, float]:
     has_override = bool(custom_rates and any(p.lower() in (req.model or '').lower() for p in custom_rates))
     if reported is not None and reported >= 0 and not has_override:
         return (reported, max(reported, full_usd))
-    actual_usd = (uncached * inp_rate + cached * cache_rate + cw * cw_rate + out * out_rate) / 1_000_000
+    cw_1h = min(cw, max(0, getattr(req, 'cache_write_1h', 0) or 0))
+    write_usd = (cw - cw_1h) * cw_rate + cw_1h * inp_rate * ONE_HOUR_WRITE_MULTIPLIER
+    actual_usd = (uncached * inp_rate + cached * cache_rate + write_usd + out * out_rate) / 1_000_000
     return (actual_usd, full_usd)
 
 

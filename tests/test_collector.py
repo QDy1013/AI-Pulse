@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from pulse.collector import Collector, FileState, Request, antigravity_model, consume, defaults, number, stamp
 from pulse.antigravity import decode_metadata, fields
-from pulse.pricing import estimate_usd, format_custom_rates, parse_custom_rates
+from pulse.pricing import estimate_usd, format_custom_rates, parse_custom_rates, resolve_rate
 
 TS = '2026-10-30T02:00:00Z'
 
@@ -53,6 +53,35 @@ class ParsingTests(unittest.TestCase):
             consume('Codex', {'type':'event_msg','timestamp':f'2026-10-30T02:00:0{i}Z','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':n}}}}, s)
         self.assertEqual(sum(r.output for r in s.requests.values()), 160)
 
+    def test_codex_legacy_before_modern_with_different_timestamp(self):
+        s = FileState()
+        # Older client portion of the session: legacy-only row before the current turn.
+        consume('Codex', {'type':'event_msg','timestamp':'2026-10-30T01:00:00Z','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':50}}}}, s)
+        consume('Codex', {'type':'event_msg','timestamp':'2026-10-30T02:00:00Z','payload':{'type':'task_started'}}, s)
+        # Dual-written response: compatibility row a few ms before the modern record.
+        consume('Codex', {'type':'event_msg','timestamp':'2026-10-30T02:00:04.998Z','payload':{'type':'token_count','info':{'total_token_usage':{'output_tokens':150}}}}, s)
+        consume('Codex', {'type':'token_usage_record','timestamp':'2026-10-30T02:00:05Z','payload':{'response_id':'r1','usage':{'output_tokens':100}}}, s)
+        self.assertEqual(sum(r.output for r in s.requests.values()), 150)
+        self.assertIn('legacy:2026-10-30T01:00:00Z', s.requests)
+
+    def test_claude_one_hour_cache_writes(self):
+        s = FileState()
+        consume('Claude', {'type':'assistant','timestamp':TS,'message':{'id':'m1','model':'claude-sonnet-4-5','usage':{
+            'output_tokens':10,'input_tokens':0,'cache_creation_input_tokens':300,
+            'cache_creation':{'ephemeral_5m_input_tokens':100,'ephemeral_1h_input_tokens':200}}}}, s)
+        r = s.requests['m1']
+        self.assertEqual((r.cache_write, r.cache_write_1h), (300, 200))
+        self.assertAlmostEqual(estimate_usd(r)[0], (100 * 3.75 + 200 * 3.0 * 2 + 10 * 15.0) / 1_000_000)
+
+    def test_pricing_prefers_most_specific_model(self):
+        self.assertEqual(resolve_rate('Codex', 'o3-mini-2025-01-31'), (1.10, 0.55, 4.40, 1.10))
+        self.assertEqual(resolve_rate('Codex', 'o3-2025-04-16'), (2.0, 0.50, 8.0, 2.0))
+        self.assertEqual(resolve_rate('Claude', 'claude-opus-4-1-20250805')[2], 75.0)
+        self.assertEqual(resolve_rate('Claude', 'claude-opus-4-5-20251101')[2], 25.0)
+        self.assertEqual(resolve_rate('Claude', 'claude-haiku-4-5-20251001')[2], 5.0)
+        custom = {'deepseek': [1, 0.1, 2], 'deepseek-v4': [3, 0.3, 6]}
+        self.assertEqual(resolve_rate('Reasonix', 'deepseek-v4-flash', custom)[0], 3.0)
+
     def test_claude_repeated_snapshots(self):
         s = FileState()
         consume('Claude', {'type':'api-request','timestamp':'2026-10-30T02:00:00Z'}, s)
@@ -82,7 +111,7 @@ class ParsingTests(unittest.TestCase):
         # Claude: input is inclusive (2 uncached + 10 cached + 20 cache_write), reasoning inside output.
         claude_req = Request('c1', 'Claude', 0, 'claude-opus-5-5', input=32, output=30, reasoning=15, cached=10, cache_write=20)
         actual, full = estimate_usd(claude_req)
-        self.assertAlmostEqual(actual, (2 * 4.0 + 10 * 0.2 + 20 * 8.0 + 30 * 20.0) / 1_000_000)
+        self.assertAlmostEqual(actual, (2 * 4.0 + 10 * 0.2 + 20 * 5.0 + 30 * 20.0) / 1_000_000)
         self.assertAlmostEqual(full, (32 * 4.0 + 30 * 20.0) / 1_000_000)
 
         # Antigravity: input (field 2) and cached (field 5) are disjoint buckets.
@@ -173,6 +202,16 @@ class FileTests(unittest.TestCase):
             cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['roots']['Claude']=[tmp]
             rows = Collector(cfg).scan()['Claude']['requests']
             self.assertEqual(sum(r.output for r in rows), 40)
+
+    def test_invalid_timestamps_are_errors_not_1970_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good = {'type':'assistant','timestamp':TS,'message':{'id':'ok','usage':{'output_tokens':40}}}
+            bad = {'type':'assistant','timestamp':'not a time','message':{'id':'bad','usage':{'output_tokens':9}}}
+            (Path(tmp)/'s.jsonl').write_text(json.dumps(good)+'\n'+json.dumps(bad)+'\n')
+            cfg = defaults(); cfg['roots'] = {app:[] for app in cfg['roots']}; cfg['roots']['Claude']=[tmp]
+            result = Collector(cfg).scan()['Claude']
+            self.assertEqual([r.key for r in result['requests']], ['ok'])
+            self.assertEqual(result['errors'], 1)
 
     def test_parse_errors_persist_across_scans(self):
         with tempfile.TemporaryDirectory() as tmp:

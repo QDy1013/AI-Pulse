@@ -1236,7 +1236,7 @@ class Pulse(QMainWindow):
             return
         cols = [
             'app', 'timestamp', 'model', 'input', 'output', 'reasoning',
-            'cached', 'cache_write', 'seconds', 'timing', 'speed', 'cost_usd', 'cost_cny',
+            'cached', 'cache_write', 'cache_write_1h', 'seconds', 'timing', 'speed', 'cost_usd', 'cost_cny',
         ]
         rates = self.custom_rates()
         fx = self.usd_to_cny()

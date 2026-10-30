@@ -53,6 +53,7 @@ class Request:
     timing: str = 'unavailable'
     cache_write: int = 0
     cost_usd: float | None = None
+    cache_write_1h: int = 0  # Subset of cache_write billed at the 1-hour cache rate.
 
     @property
     def speed(self):
@@ -90,12 +91,12 @@ def antigravity_model(number, aliases, detected=''):
     return aliases.get(str(number)) or detected or f'未命名模型 #{number}'
 
 def usage_request(app, key, timestamp, usage, model='', seconds=None, timing='unavailable',
-                  cache_write=0, cost_usd=None):
+                  cache_write=0, cost_usd=None, cache_write_1h=0):
     return Request(str(key), app, stamp(timestamp), str(model)[:160],
                    int(number(usage.get('input_tokens'))), int(number(usage.get('output_tokens'))),
                    int(number(usage.get('reasoning_output_tokens'))),
                    int(number(usage.get('cached_input_tokens'))), seconds, timing,
-                   int(number(cache_write)), cost_usd)
+                   int(number(cache_write)), cost_usd, int(number(cache_write_1h)))
 
 def consume(app, d, state, generic=False):
     """Normalize known schemas. Duplicate snapshots replace the same request."""
@@ -124,10 +125,13 @@ def consume(app, d, state, generic=False):
             c['start'] = max(c.get('start', 0), stamp(ts))
         if t == 'token_usage_record':
             c['modern'] = True
-            # Remove compatibility token_count rows if a modern record follows them.
-            out.pop('legacy:' + str(ts), None)
-            u = p.get('usage') or {}
             start = c.get('start', 0)
+            # Remove compatibility token_count rows written for this response. Their timestamps
+            # can differ slightly from the modern record, so match by turn window instead of
+            # exact timestamp; rows from before the turn (older client versions) are kept.
+            for when, legacy_key in c.pop('legacy', []):
+                if not start or when >= start: out.pop(legacy_key, None)
+            u = p.get('usage') or {}
             seconds = stamp(ts) - start if start else 0
             key = p.get('response_id') or ('record:' + str(d.get('ordinal', ts)))
             r = usage_request(app, key, ts, u, c.get('model', ''), seconds if seconds > 0 else None,
@@ -146,6 +150,7 @@ def consume(app, d, state, generic=False):
             r = usage_request(app, 'legacy:' + str(ts), ts, delta, c.get('model', ''),
                               cache_write=delta.get('cache_write_input_tokens', 0))
             out[r.key] = r
+            c.setdefault('legacy', []).append((r.timestamp, r.key))
     elif app == 'Claude':
         if t == 'user' or t == 'api-request': c['start'] = stamp(ts)
         if t != 'assistant': return
@@ -154,6 +159,8 @@ def consume(app, d, state, generic=False):
         if not isinstance(u, dict) or not m.get('id'): return
         # Claude input excludes cache read/write; normalize to inclusive input.
         raw_cw = int(number(u.get('cache_creation_input_tokens')))
+        # 1-hour cache writes are billed at a higher rate than 5-minute ones.
+        cw_1h = min(raw_cw, int(number((u.get('cache_creation') or {}).get('ephemeral_1h_input_tokens'))))
         u = dict(u)
         u['input_tokens'] = sum(number(u.get(k)) for k in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
         u['cached_input_tokens'] = u.get('cache_read_input_tokens', 0)
@@ -168,7 +175,8 @@ def consume(app, d, state, generic=False):
         if old and old.output > number(u.get('output_tokens')): return
         seconds = stamp(ts) - start if start else 0
         r = usage_request(app, key, ts, u, m.get('model', ''), seconds if seconds > 0 else None,
-                          'turn_elapsed_estimate' if seconds > 0 else 'unavailable', raw_cw)
+                          'turn_elapsed_estimate' if seconds > 0 else 'unavailable', raw_cw,
+                          cache_write_1h=cw_1h)
         out[r.key] = r
     elif app == 'WorkBuddy':
         pd = d.get('providerData') or {}
@@ -292,6 +300,10 @@ class Collector:
             # Same response can appear in copied Claude session logs: count it once.
             unique = {}
             for r in rows:
+                # Unparseable timestamps would surface as 1970 records; count them as errors.
+                if r.timestamp <= 0:
+                    errors += 1
+                    continue
                 if r.key not in unique or r.output >= unique[r.key].output: unique[r.key] = r
             rows = sorted(unique.values(), key=lambda r: r.timestamp)
             if rows: status = '已接入 · 本地用量记录'
