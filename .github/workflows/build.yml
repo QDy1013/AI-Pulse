@@ -12,8 +12,8 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install -r requirements-build.txt
       - run: python -m unittest discover -s tests -v
-      - run: python -m PyInstaller --noconfirm --windowed --onefile --name AI-Pulse --collect-all customtkinter main.py
+      - run: python -m PyInstaller --noconfirm AI-Pulse.spec
       - uses: actions/upload-artifact@v4
         with:
           name: AI-Pulse-Windows
-          path: dist/AI-Pulse.exe
+          path: dist/AI-Pulse/

@@ -1,6 +1,12 @@
 # AI Pulse
 
-一个本地运行的 Windows AI 用量监控桌面应用。用同一个面板查看不同 AI 编程工具的 Token 用量、请求记录与速度趋势。MIT 开源。
+一个本地运行的 Windows AI 用量监控桌面应用。用同一个面板查看不同 AI 编程工具的 Token 用量、请求记录与速度趋势。应用源码 MIT 开源。
+
+## v0.2 界面更新
+
+界面迁移到 Qt 原生高 DPI 渲染。取消为适应屏幕而整体缩小界面的处理，字体和图表按显示器缩放比例绘制。使用更清楚的字号与对比度、四列指标卡、矢量曲线与悬停提示、软件输出分布和更宽松的请求表格。小屏幕使用滚动区域，不压缩文字。
+
+Qt 依赖采用开放目录形式打包，请保留 EXE 同级的 `_internal` 文件夹；不要只复制 EXE。
 
 ## 功能
 
@@ -11,7 +17,7 @@
 - 修改记录目录，导入标准 JSONL，导出 CSV。
 - 完全离线运行，无遥测、无联网服务、无需 API Key。
 
-## 支持范围（v0.1.0）
+## 支持范围（v0.2.0）
 
 | 软件 | 本地接入 | Token 用量 | 速度 |
 | --- | --- | --- | --- |
@@ -39,7 +45,7 @@ Windows 用户双击发行包中的 `AI-Pulse.exe`，无需安装 Python。首�
 
 ## 从源码运行
 
-需要 Python 3.11+（含 Tk）。
+需要 Python 3.11+。
 
 ```powershell
 python -m venv .venv
@@ -52,7 +58,7 @@ python -m venv .venv
 ```powershell
 python -m unittest discover -s tests -v
 python -m pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm --clean --windowed --onefile --name AI-Pulse --collect-all customtkinter main.py
+python -m PyInstaller --noconfirm --clean AI-Pulse.spec
 ```
 
 ## 通用导入协议
@@ -72,3 +78,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile --name AI-Pulse -
 ## 贡献适配器
 
 适配逻辑位于 `pulse/collector.py` 的 `consume`。请先确认数据来源的计量口径，为去重、部分写入、截断、缺失耗时添加合成测试。提交示例时使用人工构造数据，勿提交真实会话、凭证或个人目录。当前无自动更新机制。
+
+## 第三方组件
+
+应用使用未修改的 Qt / PySide6 动态库。其许可、上游源码位置和替换方式见 [THIRD_PARTY.md](THIRD_PARTY.md)。系统字体由本机 Windows 提供，发行包不包含微软字体。
