@@ -23,6 +23,21 @@ class DesktopTests(unittest.TestCase):
 
     def tearDown(self):self.window.close()
 
+    def test_icon_ico_and_window_icon(self):
+        import struct
+        from pathlib import Path
+        from pulse import icon
+        data = icon.ico()
+        reserved, kind, count = struct.unpack_from('<HHH', data)
+        self.assertEqual((reserved, kind, count), (0, 1, len(icon.ICO_SIZES)))
+        sizes = [struct.unpack_from('<B', data, 6 + 16 * i)[0] or 256 for i in range(count)]
+        self.assertEqual(sizes, list(icon.ICO_SIZES))
+        size, offset = struct.unpack_from('<II', data, 6 + 8)
+        self.assertEqual(data[offset:offset + 8], b'\x89PNG\r\n\x1a\n')
+        # The packaged EXE embeds this file (AI-Pulse.spec).
+        self.assertEqual(Path('pulse/assets/AI-Pulse.ico').read_bytes()[:6], data[:6])
+        self.assertGreaterEqual(len(self.window.windowIcon().availableSizes()), 5)
+
     def test_filter_preserves_totals_and_pause_controls(self):
         self.assertEqual(len(self.window.cards),5)
         self.assertEqual(self.window.table.columnCount(),7)

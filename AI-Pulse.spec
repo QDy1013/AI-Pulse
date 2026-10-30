@@ -5,6 +5,7 @@ root = Path(SPECPATH)
 a = Analysis([str(root / 'main.py')], pathex=[str(root)], binaries=[],
              datas=[(str(root / 'licenses'), 'licenses'),
                     (str(root / 'pulse' / 'mobile.html'), 'pulse'),
+                    (str(root / 'pulse' / 'assets'), 'pulse/assets'),
                     (str(root / 'THIRD_PARTY.md'), '.')],
              hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[],
              excludes=[], noarchive=False)
@@ -16,5 +17,6 @@ a.binaries = [entry for entry in a.binaries
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='AI-Pulse',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=True,
-          console=False, disable_windowed_traceback=False)
+          console=False, disable_windowed_traceback=False,
+          icon=str(root / 'pulse' / 'assets' / 'AI-Pulse.ico'))
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=True, name='AI-Pulse')

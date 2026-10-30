@@ -84,6 +84,16 @@ class ServerTests(unittest.TestCase):
         manifest = json.loads(self.get('/manifest.webmanifest', {'Cookie': 'pulse_key=secret-key'})[1])
         self.assertEqual(manifest['start_url'], '/?k=secret-key')
 
+    def test_home_screen_icons_are_public_pngs(self):
+        # iOS fetches the touch icon without the page's key, and ignores SVG icons.
+        for path in ('/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'):
+            with urlopen(self.base + path, timeout=5) as r:
+                self.assertEqual(r.headers['Content-Type'], 'image/png')
+                self.assertEqual(r.read(8), b'\x89PNG\r\n\x1a\n')
+        manifest = json.loads(self.get('/manifest.webmanifest')[1])
+        self.assertIn('/icon-512.png', [i['src'] for i in manifest['icons']])
+        self.assertIn('apple-touch-icon.png', self.get('/?k=secret-key')[1])
+
     def test_unchanged_summary_answers_304(self):
         auth = {'Authorization': 'Bearer secret-key'}
         status, body, headers = self.get('/api/summary?app=all&period=all', auth)

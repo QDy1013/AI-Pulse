@@ -34,15 +34,17 @@ TREND_LIMIT = 40
 RECENT_LIMIT = 30
 QUICK_URL = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
 
-ICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">'
-        '<rect x="6" y="6" width="116" height="116" rx="28" fill="#1b1e24" stroke="#3b3f48" stroke-width="3"/>'
-        '<path d="M22 67H43L54 34L73 93L85 57H106" fill="none" stroke="#f6f6f3" stroke-width="7.5" '
-        'stroke-linecap="round" stroke-linejoin="round"/></svg>')
 MANIFEST = json.dumps({
     'name': 'AI Pulse', 'short_name': 'AI Pulse', 'start_url': '/', 'display': 'standalone',
     'background_color': '#f3f3f0', 'theme_color': '#f9f9f7',
-    'icons': [{'src': '/icon.svg', 'sizes': 'any', 'type': 'image/svg+xml'}],
+    'icons': [{'src': '/icon.svg', 'sizes': 'any', 'type': 'image/svg+xml'},
+              {'src': '/icon-192.png', 'sizes': '192x192', 'type': 'image/png', 'purpose': 'any maskable'},
+              {'src': '/icon-512.png', 'sizes': '512x512', 'type': 'image/png', 'purpose': 'any maskable'}],
 })
+# Icons from pulse/assets (tools/make_icons.py); public, since browsers fetch them without the key.
+ASSETS = Path(__file__).with_name('assets')
+ICONS = {'/icon.svg': 'image/svg+xml', '/apple-touch-icon.png': 'image/png',
+         '/icon-192.png': 'image/png', '/icon-512.png': 'image/png'}
 
 
 def new_token():
@@ -153,7 +155,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
+        if 'Cache-Control' not in (extra or {}):
+            self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('X-Frame-Options', 'DENY')
@@ -172,8 +175,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlsplit(self.path)
         query = parse_qs(url.query)
-        if url.path == '/icon.svg':
-            return self.send(200, ICON, 'image/svg+xml')
+        if url.path in ICONS:
+            try:
+                return self.send(200, (ASSETS / url.path[1:]).read_bytes(), ICONS[url.path],
+                                 {'Cache-Control': 'public, max-age=86400'})
+            except OSError:
+                return self.send(404, 'Not found', 'text/plain; charset=utf-8')
         token = self.server.owner.token
         if url.path == '/manifest.webmanifest':
             # Home-screen apps (notably iOS) keep a separate cookie jar, so an authorized

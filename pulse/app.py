@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon, QMenu,
 )
 
-from . import autostart, insights
+from . import autostart, icon, insights
 from .collector import APPS, Collector, defaults
 from .pricing import (
     DEFAULT_USD_TO_CNY, estimate_usd, format_cny, format_custom_rates, format_usd, parse_custom_rates,
@@ -274,23 +274,11 @@ def format_model_names(names):
 
 
 def app_icon():
-    image = QPixmap(128, 128)
-    image.fill(Qt.GlobalColor.transparent)
-    p = QPainter(image)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    grad = QLinearGradient(0, 0, 128, 128)
-    grad.setColorAt(0, QColor('#2b2f37'))
-    grad.setColorAt(1, QColor('#111318'))
-    p.setBrush(grad)
-    p.setPen(QPen(QColor('#3b3f48'), 3))
-    p.drawRoundedRect(QRectF(6, 6, 116, 116), 28, 28)
-    path = QPainterPath(QPointF(22, 67))
-    for x, y in [(43, 67), (54, 34), (73, 93), (85, 57), (106, 57)]:
-        path.lineTo(x, y)
-    p.setPen(QPen(QColor('#f6f6f3'), 7.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-    p.drawPath(path)
-    p.end()
-    return QIcon(image)
+    # One pixmap per common size so the title bar, taskbar and tray each get a crisp one.
+    result = QIcon()
+    for size in icon.ICO_SIZES:
+        result.addPixmap(QPixmap.fromImage(icon.image(size)))
+    return result
 
 
 def nav_dot_icon(color_hex, overview=False):
@@ -1134,9 +1122,9 @@ class Pulse(QMainWindow):
         side.setSpacing(6)
 
         brand = QHBoxLayout()
-        icon = QLabel()
-        icon.setPixmap(app_icon().pixmap(32, 32))
-        brand.addWidget(icon)
+        logo_mark = QLabel()
+        logo_mark.setPixmap(app_icon().pixmap(32, 32))
+        brand.addWidget(logo_mark)
         logo = label('AI PULSE')
         logo.setStyleSheet(f'font-family:"{LATIN}";font-size:17px;font-weight:700;letter-spacing:3px;color:{TEXT};')
         brand.addWidget(logo)
@@ -2068,10 +2056,17 @@ INSTANCE = 'AI-Pulse-' + (os.environ.get('USERNAME') or os.environ.get('USER') o
 
 
 def main():
+    if sys.platform == 'win32':
+        # Own taskbar identity: otherwise a source run is grouped under (and shows) Python's icon.
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('AIPulse.Desktop')
+        except (AttributeError, OSError):
+            pass
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName('AI Pulse')
     app.setOrganizationName('AI Pulse')
+    app.setWindowIcon(app_icon())
     app.setStyle('Fusion')
     font = QFont('Microsoft YaHei UI')
     font.setPixelSize(13)

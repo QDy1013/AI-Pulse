@@ -87,6 +87,8 @@ python -m pip install -r requirements-build.txt
 python -m PyInstaller --noconfirm --clean AI-Pulse.spec
 ```
 
+应用图标在 `pulse/icon.py` 中绘制。修改后运行 `python tools/make_icons.py`，重新生成 `pulse/assets` 下的 EXE 图标（`.ico`）和手机主屏幕图标。
+
 ## 通用导入协议
 
 其他软件可通过导出程序或插件产生以下 JSONL。每行一个请求，UTF-8 编码并以换行结尾。在桌面程序中选择所属软件后导入文件；持续追加会自动更新。同一软件内 `id` 必须全局唯一，相同 id 的记录更新该请求。
